@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Suivi d'utilisation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0e13; --surface: rgba(255, 255, 255, 0.04); --border: rgba(255, 255, 255, 0.08);
+    --text: #f4f2ed; --dim: #a09bb0; --faint: #6b6678; --accent: #c9a961; --accent-soft: rgba(201, 169, 97, 0.15);
+    --green: #6dbfa8; --blue: #6a9bd4; --red: #e07a6c;
+  }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 32px 20px 60px; line-height: 1.5; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-family: 'Fraunces', serif; font-size: 32px; font-weight: 600; letter-spacing: -1px; color: #e3cf9f; }
+  .sub { color: var(--dim); font-size: 14px; margin-top: 4px; }
+  .top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
+  button, .btn { font-family: inherit; font-size: 14px; border-radius: 10px; padding: 10px 16px; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--dim); }
+  button.primary { background: var(--accent); color: #1a1426; border: none; font-weight: 600; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+  .login { max-width: 380px; margin: 60px auto; display: flex; flex-direction: column; gap: 12px; }
+  .login label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  .login input { width: 100%; padding: 11px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit; font-size: 14px; margin-top: 6px; }
+  .error { color: var(--red); font-size: 14px; }
+  .note { color: var(--faint); font-size: 13px; }
+  .months { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+  .months button { padding: 7px 12px; border-radius: 999px; font-size: 13px; }
+  .months button.on { background: var(--accent-soft); border-color: var(--accent); color: #e3cf9f; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .kpi .v { font-family: 'Fraunces', serif; font-size: 34px; font-weight: 600; }
+  .kpi .l { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  .section { margin-top: 26px; }
+  .section h2 { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; margin-bottom: 12px; }
+  .chart { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; align-items: end; height: 190px; }
+  .col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; cursor: pointer; }
+  .bars { display: flex; gap: 3px; align-items: flex-end; height: 140px; width: 100%; justify-content: center; }
+  .bar { width: 42%; max-width: 18px; border-radius: 4px 4px 0 0; min-height: 2px; }
+  .bar.users { background: var(--accent); }
+  .bar.created { background: var(--green); }
+  .col .n { font-size: 11px; color: var(--dim); }
+  .col .m { font-size: 11px; color: var(--faint); }
+  .col.on .m { color: var(--text); font-weight: 600; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--dim); margin-top: 10px; }
+  .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .legend .u::before { background: var(--accent); }
+  .legend .c::before { background: var(--green); }
+  .stack { display: flex; flex-direction: column-reverse; gap: 2px; width: 60%; max-width: 26px; min-height: 2px; }
+  .stack .seg { border-radius: 0; min-height: 2px; }
+  .stack .seg:last-child { border-radius: 4px 4px 0 0; }
+  .stack .seg:hover { filter: brightness(1.25); }
+  .legend .who::before { background: var(--c); }
+  .kpi.ai .v { color: #a9c6ec; }
+  td.num { white-space: nowrap; }
+  td:first-child { white-space: nowrap; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px; border-bottom: 1px solid var(--border); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; }
+  pre { background: #07060a; border: 1px solid var(--border); border-radius: 10px; padding: 14px; font-size: 12px; overflow-x: auto; color: #e3cf9f; margin: 12px 0; white-space: pre; }
+  code { color: #e3cf9f; }
+  ol { margin: 10px 0 0 20px; color: var(--dim); font-size: 14px; }
+  ol li { margin-bottom: 6px; }
+
+  /* Onglets : une appli par onglet */
+  .tabs { display: flex; gap: 6px; margin-bottom: 22px; border-bottom: 1px solid var(--border); }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 10px 14px; font-weight: 600; color: var(--dim); }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+  .tabs .state { font-size: 11px; color: var(--faint); margin-left: 6px; font-weight: 500; }
+  .bar.days { background: var(--blue); }
+  .legend .d::before { background: var(--blue); }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><p class="note">Chargement…</p></div>
+
+<script>
+// ===== SUIVI D'UTILISATION DE TOUTES LES APPLIS =====
+// Une seule page, un onglet par appli. Chaque appli a son propre projet Firebase : la page se
+// connecte aux deux avec le même e-mail et mot de passe. Les statistiques ne sont lisibles que
+// par l'administratrice, grâce aux règles Firestore de chaque projet (affichées ici si besoin).
+const APPS = {
+  collection: {
+    name: 'Collection', url: 'https://marl75.github.io/mes-livres/',
+    config: {
+      apiKey: "AIzaSyDj2AnlTDxOv_sHD311icF540ijNPMJS2E",
+      authDomain: "mes-livres-dafce.firebaseapp.com",
+      projectId: "mes-livres-dafce",
+      storageBucket: "mes-livres-dafce.firebasestorage.app",
+      messagingSenderId: "832888789850",
+      appId: "1:832888789850:web:82352a1b18640f89aab163",
+    },
+  },
+  routine: {
+    name: 'Routine', url: 'https://marl75.github.io/fitness-coach/',
+    config: {
+      apiKey: "AIzaSyAvxvKu02zr-8MCS21_gvDYuF_LqNnzjTM",
+      authDomain: "fitcoach-71392.firebaseapp.com",
+      projectId: "fitcoach-71392",
+      storageBucket: "fitcoach-71392.firebasestorage.app",
+      messagingSenderId: "756601608124",
+      appId: "1:756601608124:web:923dd8a7370a12d2203db9",
+    },
+  },
+};
+for (const [key, a] of Object.entries(APPS)) {
+  a.fb = firebase.initializeApp(a.config, key);
+  a.auth = a.fb.auth();
+  a.db = a.fb.firestore();
+  a.user = undefined; // inconnu tant que Firebase n'a pas répondu
+  a.docs = null; a.error = null;
+}
+const root = document.getElementById('root');
+let tab = 'collection';
+try { tab = localStorage.getItem('admin-tab') || (location.hash.slice(1) in APPS ? location.hash.slice(1) : 'collection'); } catch (e) {}
+if (!(tab in APPS)) tab = 'collection';
+let selected = null;
+let docs = []; // statistiques de l'onglet affiché (utilisées par les fonctions de Collection)
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const monthKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const monthLabel = (m, style) => new Date(+m.slice(0, 4), +m.slice(5) - 1, 1).toLocaleDateString('fr-FR', { month: style || 'short', year: style ? 'numeric' : undefined }).replace('.', '');
+const dateLabel = ts => ts ? new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
+
+// ----- Collection : calculs repris à l'identique de l'ancienne page admin -----
+const usd = n => n ? `${n < 0.995 ? n.toFixed(3) : n.toFixed(2)} $` : '0 $';
+const dateTimeLabel = ts => ts ? new Date(ts).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '–';
+
+function totalRecoCost() {
+  return docs.reduce((n, u) => n + Object.values(u.months || {}).reduce((m, x) => m + (x.recoCost || 0), 0), 0);
+}
+
+// Couleurs des utilisateurs dans le graphique des coûts (palette catégorielle validée pour
+// fond sombre, dans un ordre fixe). Au-delà de 7 comptes, les autres sont regroupés.
+const USER_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9'];
+const OTHERS_COLOR = '#6b6678';
+
+// Comptes classés par coût total sur la période : la couleur suit le compte, pas le mois
+function recoColors(perMonth) {
+  const totals = {};
+  perMonth.forEach(p => p.rows.forEach(r => { if (r.recoCost) totals[r.email] = (totals[r.email] || 0) + r.recoCost; }));
+  const ranked = Object.keys(totals).sort((a, b) => totals[b] - totals[a] || a.localeCompare(b));
+  const colors = {};
+  ranked.forEach((email, i) => { colors[email] = USER_COLORS[i] || OTHERS_COLOR; });
+  return { colors, ranked, totals };
+}
+
+function costStack(p, colors, ranked, maxCost) {
+  const segs = {};
+  p.rows.forEach(r => {
+    if (!r.recoCost) return;
+    const key = colors[r.email] === OTHERS_COLOR ? 'Autres comptes' : r.email;
+    segs[key] = (segs[key] || 0) + r.recoCost;
+  });
+  const order = [...ranked.filter(e => segs[e]), ...(segs['Autres comptes'] ? ['Autres comptes'] : [])];
+  if (!order.length) return '<div class="stack"></div>';
+  return `<div class="stack" style="height:${p.recoCost / maxCost * 100}%">${order.map(k => `
+    <span class="seg" style="flex:${(segs[k] / p.recoCost * 100).toFixed(2)} 1 0; background:${colors[k] || OTHERS_COLOR}" title="${esc(monthLabel(p.m, 'long'))} · ${esc(k)} : ${usd(segs[k])}"></span>`).join('')}</div>`;
+}
+
+function recoSection(stats, perMonth) {
+  const maxCost = Math.max(0.0001, ...perMonth.map(p => p.recoCost));
+  const { colors, ranked, totals } = recoColors(perMonth);
+  const shown = ranked.filter(e => colors[e] !== OTHERS_COLOR);
+  const others = ranked.filter(e => colors[e] === OTHERS_COLOR);
+  const avg = stats.reco ? stats.recoCost / stats.reco : 0;
+  const rows = stats.rows.filter(r => r.reco || r.recoFailed || r.recoBlocked || r.recoAdded || r.recoDismissed)
+    .sort((a, b) => b.recoCost - a.recoCost || b.reco - a.reco);
+  return `
+    <div class="section card">
+      <h2>Recommandations (Claude) · coût sur 12 mois</h2>
+      <div class="chart">${perMonth.map(p => `
+        <div class="col ${p.m === selected ? 'on' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')} : ${p.reco} demande(s), ${usd(p.recoCost)}">
+          <div class="bars">${costStack(p, colors, ranked, maxCost)}</div>
+          <span class="n">${p.recoCost ? usd(p.recoCost) : ''}</span>
+          <span class="m">${monthLabel(p.m)}</span>
+        </div>`).join('')}</div>
+      <div class="legend" style="flex-wrap:wrap;">
+        ${shown.map(e => `<span class="who" style="--c:${colors[e]}">${esc(e)} · ${usd(totals[e])}</span>`).join('')}
+        ${others.length ? `<span class="who" style="--c:${OTHERS_COLOR}">${others.length} autre${others.length > 1 ? 's' : ''} compte${others.length > 1 ? 's' : ''} · ${usd(others.reduce((n, e) => n + totals[e], 0))}</span>` : ''}
+        ${ranked.length ? '' : '<span>Pas encore de demande sur la période.</span>'}
+      </div>
+      <p class="note" style="margin-top:10px;">Coût sur 12 mois, réparti par compte (survole une barre pour le détail). Total depuis le début : <strong>${usd(totalRecoCost())}</strong>.</p>
+    </div>
+
+    <div class="section card">
+      <h2>Recommandations en ${monthLabel(selected, 'long')}</h2>
+      ${rows.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Échecs</th><th class="num">Bloquées (limite)</th><th class="num">Ajoutées à la wishlist</th><th class="num">Refusées</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière demande</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td><span class="dot" style="background:${colors[r.email] || OTHERS_COLOR}"></span>${esc(r.email)}</td><td class="num">${r.reco}</td><td class="num">${r.recoFailed}</td><td class="num">${r.recoBlocked}</td><td class="num">${r.recoAdded}</td><td class="num">${r.recoDismissed}</td><td class="num">${r.recoTokens.toLocaleString('fr-FR')}</td><td class="num">${usd(r.recoCost)}</td><td>${dateTimeLabel(r.recoLastAt)}</td></tr>`).join('')}</tbody>
+      </table></div>` : '<p class="note">Aucune demande de recommandations ce mois-ci.</p>'}
+      <p class="note" style="margin-top:12px;">${stats.reco ? `En moyenne, une demande a coûté <strong>${usd(avg)}</strong> ce mois-ci. ` : ''}Le coût est estimé d'après la quantité de texte traitée par Claude Sonnet 5.5, mesurée en <em>tokens</em> (un token ≈ ¾ de mot). Anthropic facture 2 $ par million de tokens envoyés à Claude (la collection et les consignes) et 10 $ par million de tokens qu'il écrit (les suggestions et sa réflexion). La facture réelle est sur <a href="https://platform.claude.com/usage" target="_blank" rel="noopener" style="color:var(--accent)">la console Anthropic</a>. Limite : 5 demandes par compte et par jour.</p>
+    </div>`;
+}
+
+function lastMonths(n) {
+  const out = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = 0; i < n; i++) { out.unshift(monthKey(d)); d.setMonth(d.getMonth() - 1); }
+  return out;
+}
+
+function monthStats(m) {
+  const rows = docs.map(u => {
+    const mm = (u.months || {})[m] || {};
+    return {
+      email: u.email || u.id,
+      sessions: mm.sessions || 0,
+      created: (u.createdByMonth || {})[m] || 0,
+      modified: mm.modified || 0,
+      deleted: mm.deleted || 0,
+      lastSeen: mm.lastSeen || 0,
+      reco: mm.reco || 0,
+      recoFailed: mm.recoFailed || 0,
+      recoBlocked: mm.recoBlocked || 0,
+      recoAdded: mm.recoAdded || 0,
+      recoDismissed: mm.recoDismissed || 0,
+      recoTokens: (mm.recoTokensIn || 0) + (mm.recoTokensOut || 0),
+      recoCost: mm.recoCost || 0,
+      recoLastAt: mm.recoLastAt || 0,
+    };
+  }).filter(r => r.sessions || r.created || r.modified || r.deleted || r.reco || r.recoFailed || r.recoBlocked);
+  const sum = k => rows.reduce((n, r) => n + r[k], 0);
+  return {
+    rows: rows.sort((a, b) => b.sessions - a.sessions || b.created - a.created),
+    active: rows.filter(r => r.sessions > 0).length,
+    sessions: sum('sessions'), created: sum('created'), modified: sum('modified'), deleted: sum('deleted'),
+    reco: sum('reco'), recoFailed: sum('recoFailed'), recoBlocked: sum('recoBlocked'), recoAdded: sum('recoAdded'),
+    recoDismissed: sum('recoDismissed'), recoCost: sum('recoCost'),
+    recoUsers: rows.filter(r => r.reco || r.recoFailed || r.recoBlocked).length,
+  };
+}
+
+
+
+function renderCollection(docs) {
+  const months = lastMonths(12);
+  if (!selected) selected = months[months.length - 1];
+  const stats = monthStats(selected);
+  const perMonth = months.map(m => ({ m, ...monthStats(m) }));
+  const maxUsers = Math.max(1, ...perMonth.map(p => p.active));
+  const maxCreated = Math.max(1, ...perMonth.map(p => p.created));
+  const firstTracked = Math.min(...docs.map(u => Math.min(...Object.values(u.months || {}).map(x => x.lastSeen || Infinity))));
+
+  return `
+    <div class="top">
+      <div><h1>Suivi d'utilisation</h1><p class="sub">Collection · ${docs.length} compte${docs.length > 1 ? 's' : ''} connu${docs.length > 1 ? 's' : ''}</p></div>
+      <div style="display:flex; gap:8px;"><button onclick="Admin.reload()">Actualiser</button><button onclick="Admin.signOut()">Se déconnecter</button></div>
+    </div>
+
+    <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
+
+    <div class="kpis">
+      <div class="card kpi"><div class="v">${stats.active}</div><div class="l">Utilisateurs actifs</div></div>
+      <div class="card kpi"><div class="v">${stats.created}</div><div class="l">Éléments créés</div></div>
+      <div class="card kpi"><div class="v">${stats.modified}</div><div class="l">Éléments modifiés</div></div>
+      <div class="card kpi"><div class="v">${stats.deleted}</div><div class="l">Éléments supprimés</div></div>
+      <div class="card kpi"><div class="v">${stats.sessions}</div><div class="l">Ouvertures de l'appli</div></div>
+      <div class="card kpi ai"><div class="v">${stats.reco}</div><div class="l">Demandes de recos (${stats.recoUsers} compte${stats.recoUsers > 1 ? 's' : ''})</div></div>
+      <div class="card kpi ai"><div class="v">${usd(stats.recoCost)}</div><div class="l">Coût IA du mois</div></div>
+    </div>
+
+    <div class="section card">
+      <h2>12 derniers mois</h2>
+      <div class="chart">${perMonth.map(p => `
+        <div class="col ${p.m === selected ? 'on' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')} : ${p.active} utilisateur(s), ${p.created} créé(s)">
+          <div class="bars">
+            <span class="bar users" style="height:${p.active / maxUsers * 100}%"></span>
+            <span class="bar created" style="height:${p.created / maxCreated * 100}%"></span>
+          </div>
+          <span class="n">${p.active || ''}</span>
+          <span class="m">${monthLabel(p.m)}</span>
+        </div>`).join('')}</div>
+      <div class="legend"><span class="u">Utilisateurs actifs</span><span class="c">Éléments créés</span></div>
+    </div>
+
+    <div class="section card">
+      <h2>Détail de ${monthLabel(selected, 'long')}</h2>
+      ${stats.rows.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th class="num">Ouvertures</th><th class="num">Créés</th><th class="num">Modifiés</th><th class="num">Supprimés</th><th>Dernière visite</th></tr></thead>
+        <tbody>${stats.rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.sessions}</td><td class="num">${r.created}</td><td class="num">${r.modified}</td><td class="num">${r.deleted}</td><td>${dateLabel(r.lastSeen)}</td></tr>`).join('')}</tbody>
+      </table></div>` : '<p class="note">Aucune activité ce mois-ci.</p>'}
+    </div>
+
+    ${recoSection(stats, perMonth)}
+
+    <div class="section card">
+      <h2>Tous les comptes</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Éléments</th><th class="num">Profils</th></tr></thead>
+        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+
+    <p class="note" style="margin-top:20px;">Les éléments créés sont comptés d'après leur date d'ajout (historique complet, hors éléments supprimés). Les ouvertures, modifications et suppressions ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date.</p>`;
+}
+
+
+// ----- Routine -----
+function routineMonth(m) {
+  const rows = docs.map(u => {
+    const mm = (u.months || {})[m] || {};
+    const act = (u.activityByMonth || {})[m] || {};
+    return {
+      email: u.email || u.id, opens: mm.opens || 0, routines: mm.routines || 0, lastSeen: mm.lastSeen || 0,
+      days: act.days || 0, exercises: act.exercises || 0, sets: act.sets || 0, cardioMin: act.cardioMin || 0,
+    };
+  }).filter(r => r.opens || r.days || r.routines);
+  const sum = k => rows.reduce((n, r) => n + r[k], 0);
+  return {
+    rows: rows.sort((a, b) => b.days - a.days || b.opens - a.opens),
+    active: rows.filter(r => r.opens || r.days).length,
+    opens: sum('opens'), routines: sum('routines'), days: sum('days'), exercises: sum('exercises'), sets: sum('sets'), cardioMin: sum('cardioMin'),
+  };
+}
+function renderRoutine() {
+  const months = lastMonths(12);
+  if (!selected) selected = months[months.length - 1];
+  const s = routineMonth(selected);
+  const perMonth = months.map(m => ({ m, ...routineMonth(m) }));
+  const maxUsers = Math.max(1, ...perMonth.map(p => p.active));
+  const maxDays = Math.max(1, ...perMonth.map(p => p.days));
+  const firstTracked = Math.min(...docs.map(u => u.firstSeen || Infinity));
+  return `
+    <div class="top">
+      <div><h1>Suivi d'utilisation</h1><p class="sub">Routine · ${docs.length} compte${docs.length > 1 ? 's' : ''} connu${docs.length > 1 ? 's' : ''}</p></div>
+      <div style="display:flex; gap:8px;"><button onclick="Admin.reload()">Actualiser</button><button onclick="Admin.signOut()">Se déconnecter</button></div>
+    </div>
+    <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
+    <div class="kpis">
+      <div class="card kpi"><div class="v">${s.active}</div><div class="l">Utilisateurs actifs</div></div>
+      <div class="card kpi"><div class="v">${s.opens}</div><div class="l">Ouvertures de l'appli</div></div>
+      <div class="card kpi"><div class="v">${s.days}</div><div class="l">Jours d'entraînement</div></div>
+      <div class="card kpi"><div class="v">${s.exercises}</div><div class="l">Exercices notés</div></div>
+      <div class="card kpi"><div class="v">${s.sets}</div><div class="l">Séries</div></div>
+      <div class="card kpi"><div class="v">${s.cardioMin}</div><div class="l">Minutes de cardio</div></div>
+      <div class="card kpi"><div class="v">${s.routines}</div><div class="l">Routines lancées</div></div>
+    </div>
+    <div class="section card">
+      <h2>12 derniers mois</h2>
+      <div class="chart">${perMonth.map(p => `
+        <div class="col ${p.m === selected ? 'on' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')} : ${p.active} utilisateur(s), ${p.days} jour(s) d'entraînement">
+          <div class="bars">
+            <span class="bar users" style="height:${p.active / maxUsers * 100}%"></span>
+            <span class="bar days" style="height:${p.days / maxDays * 100}%"></span>
+          </div>
+          <span class="n">${p.active || ''}</span>
+          <span class="m">${monthLabel(p.m)}</span>
+        </div>`).join('')}</div>
+      <div class="legend"><span class="u">Utilisateurs actifs</span><span class="d">Jours d'entraînement</span></div>
+    </div>
+    <div class="section card">
+      <h2>Détail de ${monthLabel(selected, 'long')}</h2>
+      ${s.rows.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th class="num">Ouvertures</th><th class="num">Jours</th><th class="num">Exercices</th><th class="num">Séries</th><th class="num">Cardio (min)</th><th class="num">Routines</th><th>Dernière visite</th></tr></thead>
+        <tbody>${s.rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.opens}</td><td class="num">${r.days}</td><td class="num">${r.exercises}</td><td class="num">${r.sets}</td><td class="num">${r.cardioMin}</td><td class="num">${r.routines}</td><td>${dateLabel(r.lastSeen)}</td></tr>`).join('')}</tbody>
+      </table></div>` : '<p class="note">Aucune activité ce mois-ci.</p>'}
+    </div>
+    <div class="section card">
+      <h2>Tous les comptes</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Séances</th><th class="num">Routines</th><th class="num">Exercices créés</th><th class="num">Objectifs muscles</th><th>Langue</th></tr></thead>
+        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.sessionCount || 0}</td><td class="num">${u.routineCount || 0}</td><td class="num">${u.customCount || 0}</td><td class="num">${u.goalsCount || 0}</td><td>${esc(u.lang || '')}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>
+    <p class="note" style="margin-top:20px;">Jours d'entraînement, exercices, séries et minutes de cardio sont recalculés d'après l'historique complet des séances. Les ouvertures et routines lancées ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date.</p>`;
+}
+
+// ----- Règles à coller dans la console Firebase quand l'accès n'est pas encore autorisé -----
+function rulesFor(key, uid) {
+  if (key === 'collection') return `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /shares/{shareId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.owner == request.auth.uid;
+      allow update: if request.auth != null && resource.data.owner == request.auth.uid
+                    && request.resource.data.owner == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.owner == request.auth.uid;
+    }
+    match /usage/{userId} {
+      allow read: if request.auth != null
+                  && (request.auth.uid == userId || request.auth.uid == '${uid}');
+      allow create, update: if request.auth != null && request.auth.uid == userId;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}`;
+  return `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /usage/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || request.auth.uid == '${uid}');
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}`;
+}
+function rulesHtml(key) {
+  const a = APPS[key];
+  return `<div class="card">
+      <h2 style="font-size:18px; margin-bottom:8px;">Accès pas encore autorisé</h2>
+      <p class="sub">Pour que ce compte puisse lire les statistiques de ${a.name}, remplace les règles de sa base Firebase par ce texte (il contient ton identifiant <code>${esc(a.user.uid)}</code>) :</p>
+      <pre>${esc(rulesFor(key, a.user.uid))}</pre>
+      <button class="primary" onclick="Admin.copyRules('${key}', this)">Copier les règles</button>
+      <ol>
+        <li>Ouvre <a href="https://console.firebase.google.com/project/${a.config.projectId}/firestore/rules" target="_blank" rel="noopener" style="color:var(--accent)">les règles Firestore du projet ${a.config.projectId}</a>.</li>
+        <li>Remplace tout le texte par celui ci-dessus, puis clique sur <strong>Publier</strong>.</li>
+        <li>Attends une minute et clique sur Actualiser.</li>
+      </ol>
+      <p style="margin-top:14px;"><button onclick="Admin.reload()">Actualiser</button></p>
+    </div>`;
+}
+
+// ----- Connexion : un seul formulaire, connexion aux deux projets -----
+function loginHtml(message) {
+  return `<div class="login card">
+      <h1>Suivi d'utilisation</h1>
+      <p class="sub">Connecte-toi avec ton compte administratrice (le même e-mail et mot de passe pour toutes les applis).</p>
+      ${message ? `<p class="error">${esc(message)}</p>` : ''}
+      <div><label>E-mail<input id="email" type="email" autocomplete="email"></label></div>
+      <div><label>Mot de passe<input id="password" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')Admin.signIn()"></label></div>
+      <button class="primary" onclick="Admin.signIn()">Se connecter</button>
+    </div>`;
+}
+
+const Admin = {
+  message: '',
+  async signIn() {
+    const email = document.getElementById('email').value.trim(), pw = document.getElementById('password').value;
+    const res = await Promise.allSettled(Object.values(APPS).map(a => a.auth.signInWithEmailAndPassword(email, pw)));
+    const failed = Object.values(APPS).filter((a, i) => res[i].status === 'rejected').map(a => a.name);
+    Admin.message = failed.length === res.length ? 'E-mail ou mot de passe incorrect.'
+      : failed.length ? `Connexion refusée pour : ${failed.join(', ')} (compte absent ou mot de passe différent).` : '';
+    draw();
+  },
+  signOut() { Object.values(APPS).forEach(a => a.auth.signOut()); },
+  pick(m) { selected = m; draw(); },
+  select(key) {
+    tab = key; selected = null;
+    try { localStorage.setItem('admin-tab', key); } catch (e) {}
+    draw();
+  },
+  async reload() { const a = APPS[tab]; a.docs = null; a.error = null; draw(); await load(tab); },
+  async copyRules(key, btn) { try { await navigator.clipboard.writeText(rulesFor(key, APPS[key].user.uid)); btn.textContent = 'Copié !'; } catch (e) {} },
+};
+
+async function load(key) {
+  const a = APPS[key];
+  if (!a.user) return;
+  try {
+    const snap = await a.db.collection('usage').get();
+    a.docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    a.error = null;
+  } catch (e) {
+    a.docs = null;
+    a.error = e.code === 'permission-denied' ? 'rules' : e.message;
+  }
+  if (key === tab) draw();
+}
+
+function draw() {
+  const anyKnown = Object.values(APPS).some(a => a.user !== undefined);
+  if (!anyKnown) { root.innerHTML = '<p class="note">Chargement…</p>'; return; }
+  const anyUser = Object.values(APPS).some(a => a.user);
+  if (!anyUser) { root.innerHTML = loginHtml(Admin.message); return; }
+  const a = APPS[tab];
+  const tabs = `<div class="tabs" role="tablist">${Object.entries(APPS).map(([k, x]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? 'on' : ''}" onclick="Admin.select('${k}')">${x.name}${x.user ? '' : '<span class="state">non connecté</span>'}</button>`).join('')}</div>`;
+  let body;
+  if (!a.user) body = `<div class="card"><p class="sub">Pas connecté à ${a.name} : ton compte n'existe pas dans ce projet, ou son mot de passe est différent.</p>${Admin.message ? `<p class="error" style="margin-top:8px;">${esc(Admin.message)}</p>` : ''}<p style="margin-top:12px;"><button onclick="Admin.signOut()">Se déconnecter et réessayer</button></p></div>`;
+  else if (a.error === 'rules') body = rulesHtml(tab);
+  else if (a.error) body = `<p class="error">Impossible de charger les statistiques : ${esc(a.error)}</p>`;
+  else if (!a.docs) { body = '<p class="note">Chargement…</p>'; }
+  else { docs = a.docs; body = tab === 'collection' ? renderCollection(docs) : renderRoutine(); }
+  root.innerHTML = tabs + body;
+}
+
+for (const [key, a] of Object.entries(APPS)) {
+  a.auth.onAuthStateChanged(user => {
+    a.user = user || null; a.docs = null; a.error = null;
+    draw();
+    if (user) load(key);
+  });
+}
+</script>
+</body>
+</html>
