@@ -407,8 +407,8 @@ function renderCollection(docs) {
     <div class="section card">
       <h2>Tous les comptes</h2>
       <div class="table-wrap"><table>
-        <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Éléments</th><th class="num">Profils</th></tr></thead>
-        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Éléments</th><th class="num">Profils</th><th class="num" title="Place occupée sur le maximum de 1 Mo par compte (limite de Firestore)">Taille</th></tr></thead>
+        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td><td class="num">${sizeLabel(u.docBytes)}</td></tr>`).join('')}</tbody>
       </table></div>
     </div>
 
@@ -486,6 +486,13 @@ function renderRoutine() {
     <p class="note" style="margin-top:20px;">Jours d'entraînement, exercices, séries et minutes de cardio sont recalculés d'après l'historique complet des séances. Les ouvertures et routines lancées ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date.</p>`;
 }
 
+// Place occupée par une collection sur le maximum de 1 Mo par compte, en rouge à partir de 80 %
+function sizeLabel(bytes) {
+  if (!bytes) return '–';
+  const pct = Math.round(bytes / (1024 * 1024) * 100);
+  return pct >= 80 ? `<span class="error">${pct} %</span>` : `${pct} %`;
+}
+
 // ----- Règles à coller dans la console Firebase quand l'accès n'est pas encore autorisé -----
 function rulesFor(key, uid) {
   if (key === 'collection') return `rules_version = '2';
@@ -515,9 +522,41 @@ service cloud.firestore {
       allow delete: if request.auth != null && resource.data.owner == request.auth.uid;
     }
     match /usage/{userId} {
+      function ym(t) {
+        return string(t.year()) + '-' + (t.month() < 10 ? '0' : '') + string(t.month());
+      }
+      function step(after, before, f) {
+        return after.get(f, 0) is int
+            && (after.get(f, 0) == before.get(f, 0) || after.get(f, 0) == before.get(f, 0) + 1);
+      }
+      function validMonth(after, before) {
+        return after.diff(before).affectedKeys()
+                 .hasOnly(['sessions', 'modified', 'deleted', 'recoAdded', 'recoDismissed', 'lastSeen'])
+            && step(after, before, 'sessions') && step(after, before, 'modified')
+            && step(after, before, 'deleted') && step(after, before, 'recoAdded')
+            && step(after, before, 'recoDismissed');
+      }
+      function validUsage(after, before) {
+        let changed = after.diff(before).affectedKeys();
+        let months = after.get('months', {});
+        let old = before.get('months', {});
+        let m1 = ym(request.time - duration.value(14, 'h'));
+        let m2 = ym(request.time + duration.value(14, 'h'));
+        let changedMonths = months.diff(old).affectedKeys();
+        return changed.hasOnly(['email', 'firstSeen', 'lastSeen', 'createdByMonth', 'itemCount',
+                                'profileCount', 'docBytes', 'months'])
+            && (!('email' in changed) || after.email == request.auth.token.get('email', ''))
+            && (!('firstSeen' in changed) || !('firstSeen' in before))
+            && changedMonths.hasOnly([m1, m2]) && changedMonths.size() <= 1
+            && validMonth(months.get(m1, {}), old.get(m1, {}))
+            && validMonth(months.get(m2, {}), old.get(m2, {}));
+      }
       allow read: if request.auth != null
                   && (request.auth.uid == userId || request.auth.uid == '${uid}');
-      allow create, update: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null && request.auth.uid == userId
+                    && validUsage(request.resource.data, {});
+      allow update: if request.auth != null && request.auth.uid == userId
+                    && validUsage(request.resource.data, resource.data);
     }
     match /recoDaily/{day} {
       allow read: if request.auth != null && request.auth.uid == '${uid}';
