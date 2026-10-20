@@ -189,6 +189,12 @@ const parisDay = d => new Intl.DateTimeFormat('fr-CA', { timeZone: 'Europe/Paris
 const dayLabel = (day, style) => new Date(day + 'T12:00:00').toLocaleDateString('fr-FR', style === 'long' ? { weekday: 'long', day: 'numeric', month: 'long' } : { day: 'numeric', month: 'short' }).replace('.', '');
 let selectedDay = null;
 
+// Demandes avec un jeton App Check valide sur le total des demandes reçues (« – » avant la mise en place)
+function appCheckLabel(x) {
+  const ok = x.appCheckOk || 0, total = ok + (x.appCheckMissing || 0);
+  return total ? `${ok} / ${total}` : '–';
+}
+
 function lastDays(n) {
   const out = [];
   for (let i = n - 1; i >= 0; i--) out.push(parisDay(new Date(Date.now() - i * 86400000)));
@@ -232,9 +238,10 @@ function dailySection(daily, error) {
         <div class="card kpi"><div class="v" style="${t.blockedGlobal ? 'color:var(--red)' : ''}">${t.blockedGlobal || 0}</div><div class="l">Bloquées (plafond global)</div></div>
         <div class="card kpi"><div class="v">${t.failed || 0}</div><div class="l">Échecs</div></div>
         <div class="card kpi ai"><div class="v">${usd(t.cost || 0)}</div><div class="l">Coût du jour</div></div>
+        <div class="card kpi"><div class="v" style="${t.appCheckMissing ? 'color:#c98500' : ''}">${appCheckLabel(t)}</div><div class="l">App Check (demandes vérifiées)</div></div>
       </div>
       <div class="gauge" title="${used} demande(s) sur ${limits.global}"><span style="width:${pct}%; background:${pct >= 100 ? 'var(--red)' : pct >= 80 ? '#c98500' : 'var(--accent)'}"></span></div>
-      <p class="note" style="margin-top:8px;">Limites : ${limits.user} demandes par compte et ${limits.global} au total par jour (remise à zéro à minuit, heure de Paris). Ce mois-ci : <strong>${sum(month, 'count')}</strong> demandes, <strong>${sum(month, 'blockedGlobal')}</strong> bloquées par le plafond global, <strong>${usd(sum(month, 'cost'))}</strong>.</p>
+      <p class="note" style="margin-top:8px;">Limites : ${limits.user} demandes par compte et ${limits.global} au total par jour (remise à zéro à minuit, heure de Paris). App Check (observation, rien n'est bloqué) : ${sum(month, 'appCheckOk')} demande(s) vérifiée(s) et ${sum(month, 'appCheckMissing')} sans jeton valide ce mois-ci. Ce mois-ci : <strong>${sum(month, 'count')}</strong> demandes, <strong>${sum(month, 'blockedGlobal')}</strong> bloquées par le plafond global, <strong>${usd(sum(month, 'cost'))}</strong>.</p>
     </div>
 
     <div class="section card">
@@ -259,9 +266,9 @@ function dailySection(daily, error) {
     <div class="section card">
       <h2>Détail par compte · ${esc(dayLabel(selectedDay, 'long'))}</h2>
       ${rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Réussies</th><th class="num">Échecs</th><th class="num">Bloquées</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière</th></tr></thead>
-        <tbody>${rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.count || 0} / ${limits.user}</td><td class="num">${r.ok || 0}</td><td class="num">${r.failed || 0}</td><td class="num">${r.blocked || 0}</td><td class="num">${((r.tokensIn || 0) + (r.tokensOut || 0)).toLocaleString('fr-FR')}</td><td class="num">${usd(r.cost || 0)}</td><td>${dateTimeLabel(r.lastAt)}</td></tr>`).join('')}</tbody>
-        <tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${sel.count || 0} / ${limits.global}</strong></td><td class="num">${sel.ok || 0}</td><td class="num">${sel.failed || 0}</td><td class="num">${(sel.blockedUser || 0) + (sel.blockedGlobal || 0)}</td><td class="num">${((sel.tokensIn || 0) + (sel.tokensOut || 0)).toLocaleString('fr-FR')}</td><td class="num">${usd(sel.cost || 0)}</td><td></td></tr></tfoot>
+        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Réussies</th><th class="num">Échecs</th><th class="num">Bloquées</th><th class="num">Tokens</th><th class="num">Coût</th><th class="num">App Check</th><th>Dernière</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.count || 0} / ${limits.user}</td><td class="num">${r.ok || 0}</td><td class="num">${r.failed || 0}</td><td class="num">${r.blocked || 0}</td><td class="num">${((r.tokensIn || 0) + (r.tokensOut || 0)).toLocaleString('fr-FR')}</td><td class="num">${usd(r.cost || 0)}</td><td class="num">${appCheckLabel(r)}</td><td>${dateTimeLabel(r.lastAt)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${sel.count || 0} / ${limits.global}</strong></td><td class="num">${sel.ok || 0}</td><td class="num">${sel.failed || 0}</td><td class="num">${(sel.blockedUser || 0) + (sel.blockedGlobal || 0)}</td><td class="num">${((sel.tokensIn || 0) + (sel.tokensOut || 0)).toLocaleString('fr-FR')}</td><td class="num">${usd(sel.cost || 0)}</td><td class="num">${appCheckLabel(sel)}</td><td></td></tr></tfoot>
       </table></div>` : '<p class="note">Aucune demande ce jour-là.</p>'}
       <p class="note" style="margin-top:10px;">« Demandes » compte les demandes acceptées (réussies ou en échec) ; « Bloquées », celles refusées par une limite. Suivi jour par jour disponible depuis la mise en place du plafond global.</p>
     </div>`;
