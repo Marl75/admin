@@ -78,6 +78,22 @@
   .tabs .state { font-size: 11px; color: var(--faint); margin-left: 6px; font-weight: 500; }
   .bar.days { background: var(--blue); }
   .legend .d::before { background: var(--blue); }
+  .bar.blocked { background: var(--red); }
+  .legend .b::before { background: var(--red); }
+  .legend .l::before { background: none; border-top: 2px dashed var(--red); height: 0; border-radius: 0; vertical-align: 3px; }
+  .chart.days30 { grid-template-columns: repeat(30, minmax(0, 1fr)); gap: 3px; position: relative; }
+  .chart.days30 .bar { width: 45%; }
+  .chart.days30 .m { font-size: 10px; }
+  .chart.days30 .n { min-height: 16px; }
+  @media (max-width: 600px) {
+    .chart.days30 .n { font-size: 0; }
+    .chart.days30 .col:not(:nth-child(5n)):not(:last-of-type) .m { visibility: hidden; }
+  }
+  .chart.days30 .bars { position: relative; }
+  .limit-line { position: absolute; left: -2px; right: -2px; margin-bottom: -2px; border-top: 2px dashed var(--red); opacity: .6; pointer-events: none; }
+  .gauge { height: 10px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
+  .gauge span { display: block; height: 100%; border-radius: 6px; }
+  tfoot td { border-bottom: none; color: var(--dim); }
 </style>
 </head>
 <body>
@@ -167,13 +183,97 @@ function costStack(p, colors, ranked, maxCost) {
     <span class="seg" style="flex:${(segs[k] / p.recoCost * 100).toFixed(2)} 1 0; background:${colors[k] || OTHERS_COLOR}" title="${esc(monthLabel(p.m, 'long'))} · ${esc(k)} : ${usd(segs[k])}"></span>`).join('')}</div>`;
 }
 
+// ----- Collection : recommandations jour par jour (documents recoDaily/{AAAA-MM-JJ}) -----
+// Écrits par la fonction serveur : compteur global du jour, blocages, coût et détail par compte.
+const parisDay = d => new Intl.DateTimeFormat('fr-CA', { timeZone: 'Europe/Paris' }).format(d || new Date());
+const dayLabel = (day, style) => new Date(day + 'T12:00:00').toLocaleDateString('fr-FR', style === 'long' ? { weekday: 'long', day: 'numeric', month: 'long' } : { day: 'numeric', month: 'short' }).replace('.', '');
+let selectedDay = null;
+
+function lastDays(n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) out.push(parisDay(new Date(Date.now() - i * 86400000)));
+  return [...new Set(out)];
+}
+
+function dailySection(daily, error) {
+  if (error === 'rules') return `
+    <div class="section card">
+      <h2>Recommandations · suivi quotidien</h2>
+      <p class="note">Le suivi jour par jour n'est pas encore lisible : les règles Firestore doivent autoriser <code>recoDaily</code>. Remplace les règles du projet par celles-ci (ton identifiant est déjà dedans), puis clique sur Actualiser.</p>
+      <pre>${esc(rulesFor('collection', APPS.collection.user.uid))}</pre>
+      <button class="primary" onclick="Admin.copyRules('collection', this)">Copier les règles</button>
+    </div>`;
+  if (error) return `<div class="section card"><h2>Recommandations · suivi quotidien</h2><p class="error">Impossible de charger le suivi quotidien : ${esc(error)}</p></div>`;
+  if (!daily) return `<div class="section card"><h2>Recommandations · suivi quotidien</h2><p class="note">Chargement…</p></div>`;
+
+  const byDay = Object.fromEntries(daily.map(d => [d.id, d]));
+  const days = lastDays(30);
+  const today = days[days.length - 1];
+  if (!selectedDay || !days.includes(selectedDay)) selectedDay = today;
+  const t = byDay[today] || {};
+  const limits = t.limits || daily.reduce((l, d) => d.limits || l, null) || { user: 5, global: 30 };
+  const used = t.count || 0;
+  const pct = Math.min(100, used / limits.global * 100);
+  const max = Math.max(limits.global, ...days.map(d => (byDay[d] || {}).count || 0));
+  const emails = Object.fromEntries(docs.map(u => [u.id, u.email || u.id]));
+  const sel = byDay[selectedDay] || {};
+  const rows = Object.entries(sel.users || {}).map(([uid, u]) => ({ uid, email: emails[uid] || uid, ...u }))
+    .sort((a, b) => (b.count || 0) - (a.count || 0) || (b.blocked || 0) - (a.blocked || 0));
+  const month = days.filter(d => d.slice(0, 7) === today.slice(0, 7));
+  const sum = (list, k) => list.reduce((n, d) => n + ((byDay[d] || {})[k] || 0), 0);
+
+  return `
+    <div class="section card">
+      <h2>Recommandations · aujourd'hui (${esc(dayLabel(today, 'long'))})</h2>
+      <div class="kpis" style="margin-bottom:14px;">
+        <div class="card kpi ai"><div class="v">${used} / ${limits.global}</div><div class="l">Demandes du jour (tous comptes)</div></div>
+        <div class="card kpi"><div class="v">${Object.values(t.users || {}).filter(u => u.count).length}</div><div class="l">Comptes ayant demandé</div></div>
+        <div class="card kpi"><div class="v">${t.blockedUser || 0}</div><div class="l">Bloquées (limite de ${limits.user} par compte)</div></div>
+        <div class="card kpi"><div class="v" style="${t.blockedGlobal ? 'color:var(--red)' : ''}">${t.blockedGlobal || 0}</div><div class="l">Bloquées (plafond global)</div></div>
+        <div class="card kpi"><div class="v">${t.failed || 0}</div><div class="l">Échecs</div></div>
+        <div class="card kpi ai"><div class="v">${usd(t.cost || 0)}</div><div class="l">Coût du jour</div></div>
+      </div>
+      <div class="gauge" title="${used} demande(s) sur ${limits.global}"><span style="width:${pct}%; background:${pct >= 100 ? 'var(--red)' : pct >= 80 ? '#c98500' : 'var(--accent)'}"></span></div>
+      <p class="note" style="margin-top:8px;">Limites : ${limits.user} demandes par compte et ${limits.global} au total par jour (remise à zéro à minuit, heure de Paris). Ce mois-ci : <strong>${sum(month, 'count')}</strong> demandes, <strong>${sum(month, 'blockedGlobal')}</strong> bloquées par le plafond global, <strong>${usd(sum(month, 'cost'))}</strong>.</p>
+    </div>
+
+    <div class="section card">
+      <h2>Recommandations · 30 derniers jours</h2>
+      <div class="chart days30">${days.map(d => {
+        const x = byDay[d] || {};
+        const blocked = (x.blockedUser || 0) + (x.blockedGlobal || 0);
+        return `
+        <div class="col ${d === selectedDay ? 'on' : ''}" onclick="Admin.pickDay('${d}')" title="${esc(dayLabel(d, 'long'))} : ${x.count || 0} demande(s), ${blocked} bloquée(s), ${usd(x.cost || 0)}">
+          <div class="bars">
+            <span class="bar users" style="height:${(x.count || 0) / max * 100}%"></span>
+            <span class="bar blocked" style="height:${blocked / max * 100}%"></span>
+            <span class="limit-line" style="bottom:${limits.global / max * 100}%"></span>
+          </div>
+          <span class="n">${x.count || ''}</span>
+          <span class="m">${d === today ? 'auj.' : d.slice(8)}</span>
+        </div>`;
+      }).join('')}</div>
+      <div class="legend"><span class="u">Demandes acceptées</span><span class="b">Demandes bloquées</span><span class="l">Plafond global (${limits.global})</span></div>
+    </div>
+
+    <div class="section card">
+      <h2>Détail par compte · ${esc(dayLabel(selectedDay, 'long'))}</h2>
+      ${rows.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Réussies</th><th class="num">Échecs</th><th class="num">Bloquées</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.count || 0} / ${limits.user}</td><td class="num">${r.ok || 0}</td><td class="num">${r.failed || 0}</td><td class="num">${r.blocked || 0}</td><td class="num">${((r.tokensIn || 0) + (r.tokensOut || 0)).toLocaleString('fr-FR')}</td><td class="num">${usd(r.cost || 0)}</td><td>${dateTimeLabel(r.lastAt)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td><strong>Total</strong></td><td class="num"><strong>${sel.count || 0} / ${limits.global}</strong></td><td class="num">${sel.ok || 0}</td><td class="num">${sel.failed || 0}</td><td class="num">${(sel.blockedUser || 0) + (sel.blockedGlobal || 0)}</td><td class="num">${((sel.tokensIn || 0) + (sel.tokensOut || 0)).toLocaleString('fr-FR')}</td><td class="num">${usd(sel.cost || 0)}</td><td></td></tr></tfoot>
+      </table></div>` : '<p class="note">Aucune demande ce jour-là.</p>'}
+      <p class="note" style="margin-top:10px;">« Demandes » compte les demandes acceptées (réussies ou en échec) ; « Bloquées », celles refusées par une limite. Suivi jour par jour disponible depuis la mise en place du plafond global.</p>
+    </div>`;
+}
+
 function recoSection(stats, perMonth) {
   const maxCost = Math.max(0.0001, ...perMonth.map(p => p.recoCost));
   const { colors, ranked, totals } = recoColors(perMonth);
   const shown = ranked.filter(e => colors[e] !== OTHERS_COLOR);
   const others = ranked.filter(e => colors[e] === OTHERS_COLOR);
   const avg = stats.reco ? stats.recoCost / stats.reco : 0;
-  const rows = stats.rows.filter(r => r.reco || r.recoFailed || r.recoBlocked || r.recoAdded || r.recoDismissed)
+  const rows = stats.rows.filter(r => r.reco || r.recoFailed || r.recoBlocked || r.recoBlockedGlobal || r.recoAdded || r.recoDismissed)
     .sort((a, b) => b.recoCost - a.recoCost || b.reco - a.reco);
   return `
     <div class="section card">
@@ -195,10 +295,10 @@ function recoSection(stats, perMonth) {
     <div class="section card">
       <h2>Recommandations en ${monthLabel(selected, 'long')}</h2>
       ${rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Échecs</th><th class="num">Bloquées (limite)</th><th class="num">Ajoutées à la wishlist</th><th class="num">Refusées</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière demande</th></tr></thead>
-        <tbody>${rows.map(r => `<tr><td><span class="dot" style="background:${colors[r.email] || OTHERS_COLOR}"></span>${esc(r.email)}</td><td class="num">${r.reco}</td><td class="num">${r.recoFailed}</td><td class="num">${r.recoBlocked}</td><td class="num">${r.recoAdded}</td><td class="num">${r.recoDismissed}</td><td class="num">${r.recoTokens.toLocaleString('fr-FR')}</td><td class="num">${usd(r.recoCost)}</td><td>${dateTimeLabel(r.recoLastAt)}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Échecs</th><th class="num">Bloquées (limite du compte)</th><th class="num">Bloquées (plafond global)</th><th class="num">Ajoutées à la wishlist</th><th class="num">Refusées</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière demande</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td><span class="dot" style="background:${colors[r.email] || OTHERS_COLOR}"></span>${esc(r.email)}</td><td class="num">${r.reco}</td><td class="num">${r.recoFailed}</td><td class="num">${r.recoBlocked}</td><td class="num">${r.recoBlockedGlobal}</td><td class="num">${r.recoAdded}</td><td class="num">${r.recoDismissed}</td><td class="num">${r.recoTokens.toLocaleString('fr-FR')}</td><td class="num">${usd(r.recoCost)}</td><td>${dateTimeLabel(r.recoLastAt)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<p class="note">Aucune demande de recommandations ce mois-ci.</p>'}
-      <p class="note" style="margin-top:12px;">${stats.reco ? `En moyenne, une demande a coûté <strong>${usd(avg)}</strong> ce mois-ci. ` : ''}Le coût est estimé d'après la quantité de texte traitée par Claude Sonnet 5.5, mesurée en <em>tokens</em> (un token ≈ ¾ de mot). Anthropic facture 2 $ par million de tokens envoyés à Claude (la collection et les consignes) et 10 $ par million de tokens qu'il écrit (les suggestions et sa réflexion). La facture réelle est sur <a href="https://platform.claude.com/usage" target="_blank" rel="noopener" style="color:var(--accent)">la console Anthropic</a>. Limite : 5 demandes par compte et par jour.</p>
+      <p class="note" style="margin-top:12px;">${stats.reco ? `En moyenne, une demande a coûté <strong>${usd(avg)}</strong> ce mois-ci. ` : ''}Le coût est estimé d'après la quantité de texte traitée par Claude Sonnet 5.5, mesurée en <em>tokens</em> (un token ≈ ¾ de mot). Anthropic facture 2 $ par million de tokens envoyés à Claude (la collection et les consignes) et 10 $ par million de tokens qu'il écrit (les suggestions et sa réflexion). La facture réelle est sur <a href="https://platform.claude.com/usage" target="_blank" rel="noopener" style="color:var(--accent)">la console Anthropic</a>. Limites : 5 demandes par compte et 30 au total par jour.</p>
     </div>`;
 }
 
@@ -223,13 +323,14 @@ function monthStats(m) {
       reco: mm.reco || 0,
       recoFailed: mm.recoFailed || 0,
       recoBlocked: mm.recoBlocked || 0,
+      recoBlockedGlobal: mm.recoBlockedGlobal || 0,
       recoAdded: mm.recoAdded || 0,
       recoDismissed: mm.recoDismissed || 0,
       recoTokens: (mm.recoTokensIn || 0) + (mm.recoTokensOut || 0),
       recoCost: mm.recoCost || 0,
       recoLastAt: mm.recoLastAt || 0,
     };
-  }).filter(r => r.sessions || r.created || r.modified || r.deleted || r.reco || r.recoFailed || r.recoBlocked);
+  }).filter(r => r.sessions || r.created || r.modified || r.deleted || r.reco || r.recoFailed || r.recoBlocked || r.recoBlockedGlobal);
   const sum = k => rows.reduce((n, r) => n + r[k], 0);
   return {
     rows: rows.sort((a, b) => b.sessions - a.sessions || b.created - a.created),
@@ -237,7 +338,7 @@ function monthStats(m) {
     sessions: sum('sessions'), created: sum('created'), modified: sum('modified'), deleted: sum('deleted'),
     reco: sum('reco'), recoFailed: sum('recoFailed'), recoBlocked: sum('recoBlocked'), recoAdded: sum('recoAdded'),
     recoDismissed: sum('recoDismissed'), recoCost: sum('recoCost'),
-    recoUsers: rows.filter(r => r.reco || r.recoFailed || r.recoBlocked).length,
+    recoUsers: rows.filter(r => r.reco || r.recoFailed || r.recoBlocked || r.recoBlockedGlobal).length,
   };
 }
 
@@ -291,6 +392,8 @@ function renderCollection(docs) {
         <tbody>${stats.rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.sessions}</td><td class="num">${r.created}</td><td class="num">${r.modified}</td><td class="num">${r.deleted}</td><td>${dateLabel(r.lastSeen)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<p class="note">Aucune activité ce mois-ci.</p>'}
     </div>
+
+    ${dailySection(APPS.collection.daily, APPS.collection.dailyError)}
 
     ${recoSection(stats, perMonth)}
 
@@ -385,16 +488,32 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
     match /shares/{shareId} {
-      allow read: if true;
-      allow create: if request.auth != null && request.resource.data.owner == request.auth.uid;
+      function validShare(d) {
+        return d.keys().hasOnly(['owner', 'name', 'items', 'config', 'updatedAt'])
+          && d.owner == request.auth.uid
+          && d.name is string && d.name.size() <= 200
+          && d.items is list && d.items.size() <= 2000
+          && d.config is map
+          && d.config.keys().hasOnly(['cats', 'types', 'notes', 'avis'])
+          && d.config.cats is list
+          && d.config.cats.hasOnly(['lu', 'en-cours', 'a-lire', 'abandonne', 'wishlist'])
+          && d.config.types is list
+          && d.config.types.hasOnly(['livre', 'film', 'serie', 'jeu'])
+          && d.config.notes is bool && d.config.avis is bool;
+      }
+      allow get: if true;
+      allow create: if request.auth != null && validShare(request.resource.data);
       allow update: if request.auth != null && resource.data.owner == request.auth.uid
-                    && request.resource.data.owner == request.auth.uid;
+                    && validShare(request.resource.data);
       allow delete: if request.auth != null && resource.data.owner == request.auth.uid;
     }
     match /usage/{userId} {
       allow read: if request.auth != null
                   && (request.auth.uid == userId || request.auth.uid == '${uid}');
       allow create, update: if request.auth != null && request.auth.uid == userId;
+    }
+    match /recoDaily/{day} {
+      allow read: if request.auth != null && request.auth.uid == '${uid}';
     }
     match /{document=**} {
       allow read, write: if false;
@@ -462,7 +581,8 @@ const Admin = {
     try { localStorage.setItem('admin-tab', key); } catch (e) {}
     draw();
   },
-  async reload() { const a = APPS[tab]; a.docs = null; a.error = null; draw(); await load(tab); },
+  async reload() { const a = APPS[tab]; a.docs = null; a.error = null; a.daily = null; a.dailyError = null; draw(); await load(tab); },
+  pickDay(d) { selectedDay = d; draw(); },
   async copyRules(key, btn) { try { await navigator.clipboard.writeText(rulesFor(key, APPS[key].user.uid)); btn.textContent = 'Copié !'; } catch (e) {} },
 };
 
@@ -473,6 +593,17 @@ async function load(key) {
     const snap = await a.db.collection('usage').get();
     a.docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     a.error = null;
+    if (key === 'collection') {
+      try {
+        const start = lastDays(30)[0];
+        const daily = await a.db.collection('recoDaily').orderBy(firebase.firestore.FieldPath.documentId()).startAt(start).get();
+        a.daily = daily.docs.map(d => ({ id: d.id, ...d.data() }));
+        a.dailyError = null;
+      } catch (e) {
+        a.daily = null;
+        a.dailyError = e.code === 'permission-denied' ? 'rules' : e.message;
+      }
+    }
   } catch (e) {
     a.docs = null;
     a.error = e.code === 'permission-denied' ? 'rules' : e.message;
