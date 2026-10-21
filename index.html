@@ -106,6 +106,10 @@
   .col.partial .bar { opacity: .55; background-image: repeating-linear-gradient(45deg, rgba(15, 14, 19, .5) 0 3px, transparent 3px 6px); }
   .col.partial .m::after { content: '*'; }
   .me { font-size: 13px; color: var(--dim); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  /* Tableaux du détail du Site : mêmes largeurs de colonnes d'un tableau à l'autre */
+  table.aligned { table-layout: fixed; }
+  table.aligned col.num { width: 22%; }
+  table.aligned td:first-child { white-space: normal; }
   details.ops { margin-top: 26px; }
   details.ops > summary { cursor: pointer; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 20px; }
   details.ops > summary::-webkit-details-marker { display: none; }
@@ -891,15 +895,15 @@ function renderSite() {
     ${monthChart('Visiteurs', months.map(m => ({ m, visitors: SITE.totals[m] || 0 })), 'visitors', 'users')}
     <div class="section card">
       <h2>Détail de ${monthLabel(selected, 'long')}</h2>
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="aligned"><colgroup><col><col class="num"><col class="num"></colgroup>
         <thead><tr><th>Page</th><th class="num">Visiteurs</th><th class="num">Part du site</th></tr></thead>
         <tbody>${SITE.pages.map(([p, label]) => `<tr><td>${esc(label)} <span class="note">${esc(p)}</span></td><td class="num">${d[p]}</td><td class="num">${pct(d[p], total)}</td></tr>`).join('')}</tbody>
       </table></div>
-      <div class="table-wrap" style="margin-top:16px;"><table>
+      <div class="table-wrap" style="margin-top:16px;"><table class="aligned"><colgroup><col><col class="num"><col class="num"></colgroup>
         <thead><tr><th>Clic vers Ma Collection</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
         <tbody>${SITE.clicks.map(([p, label]) => `<tr><td>${esc(label)}</td><td class="num">${d[p]}</td><td class="num">${pct(d[p], total)}</td></tr>`).join('')}</tbody>
       </table></div>
-      <div class="table-wrap" style="margin-top:16px;"><table>
+      <div class="table-wrap" style="margin-top:16px;"><table class="aligned"><colgroup><col><col class="num"><col class="num"></colgroup>
         <thead><tr><th>Autre clic</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
         <tbody><tr><td>Me retrouver sur LinkedIn</td><td class="num">${d[SITE.linkedin]}</td><td class="num">${pct(d[SITE.linkedin], total)}</td></tr></tbody>
       </table></div>
