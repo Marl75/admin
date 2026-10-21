@@ -94,6 +94,26 @@
   .gauge { height: 10px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
   .gauge span { display: block; height: 100%; border-radius: 6px; }
   tfoot td { border-bottom: none; color: var(--dim); }
+
+  /* Lecture des chiffres : variations, indicateurs secondaires, mois en cours, exploitation repliée */
+  .kpi .delta { font-size: 12px; color: var(--faint); margin-top: 4px; }
+  .kpi .delta.up { color: var(--green); }
+  .kpi .delta.down { color: var(--red); }
+  .secondary { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--dim); margin: -8px 0 10px; }
+  .secondary strong { color: var(--text); font-weight: 600; }
+  .partial-note { margin-bottom: 4px; }
+  .charts2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 16px; }
+  .col.partial .bar { opacity: .55; background-image: repeating-linear-gradient(45deg, rgba(15, 14, 19, .5) 0 3px, transparent 3px 6px); }
+  .col.partial .m::after { content: '*'; }
+  .me { font-size: 13px; color: var(--dim); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  details.ops { margin-top: 26px; }
+  details.ops > summary { cursor: pointer; list-style: none; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 20px; }
+  details.ops > summary::-webkit-details-marker { display: none; }
+  details.ops > summary h2 { font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600; }
+  details.ops > summary h2::before { content: '▸ '; }
+  details.ops[open] > summary h2::before { content: '▾ '; }
+  details.ops .alert { color: #c98500; font-size: 14px; margin-top: 6px; }
+  details.ops > summary .note { margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -159,6 +179,50 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const monthKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 const monthLabel = (m, style) => new Date(+m.slice(0, 4), +m.slice(5) - 1, 1).toLocaleDateString('fr-FR', { month: style || 'short', year: style ? 'numeric' : undefined }).replace('.', '');
 const dateLabel = ts => ts ? new Date(ts).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' }) : '–';
+
+// ----- Lecture des chiffres : ton compte, mois en cours, variations -----
+// Ton propre compte (le même uid que celui connecté à cette page) est exclu par défaut pour ne pas
+// gonfler les chiffres ; l'interrupteur en haut des onglets Collection et Routine le réintègre.
+let includeMe = false;
+try { includeMe = localStorage.getItem('admin-include-me') === '1'; } catch (e) {}
+const withoutMe = a => includeMe ? a.docs : a.docs.filter(u => u.id !== a.user.uid);
+const meToggle = () => `<label class="me"><input type="checkbox" ${includeMe ? 'checked' : ''} onchange="Admin.toggleMe(this.checked)"> Inclure mon compte</label>`;
+const accountsLabel = n => `${n} compte${n > 1 ? 's' : ''} connu${n > 1 ? 's' : ''}${includeMe ? '' : ' (sans le tien)'}`;
+// Mois en cours : seuls les jours écoulés comptent, d'où la mention sous les chiffres et la barre hachurée
+const isCurrent = m => m === monthKey(new Date());
+const prevMonthKey = m => monthKey(new Date(+m.slice(0, 4), +m.slice(5) - 2, 1));
+function partialNote(m, sameDays) {
+  if (!isCurrent(m)) return '';
+  const d = new Date(), n = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const prev = monthLabel(prevMonthKey(m), 'long');
+  return `<p class="note partial-note">${monthLabel(m, 'long')} est en cours (${d.getDate()} jours sur ${n}) : ${sameDays
+    ? `les variations le comparent aux ${d.getDate()} premiers jours de ${prev}.`
+    : `les variations le comparent à ${prev} entier, attends la fin du mois pour conclure.`}</p>`;
+}
+// Écart avec le mois précédent, sous le chiffre ; neutral : pas de vert ni de rouge (un coût qui monte n'est ni bien ni mal)
+function deltaHtml(cur, prev, m, fmt = n => n, neutral = false) {
+  if (prev == null) return '';
+  const d = cur - prev;
+  const cls = neutral || !d ? '' : d > 0 ? 'up' : 'down';
+  return `<div class="delta ${cls}">${d ? (d > 0 ? '+' : '−') + fmt(Math.abs(d)) : '='} vs ${monthLabel(prevMonthKey(m))}</div>`;
+}
+const kpiCard = (v, label, delta = '', cls = '') => `<div class="card kpi ${cls}"><div class="v">${v}</div><div class="l">${label}</div>${delta}</div>`;
+// Indicateurs secondaires : une ligne discrète sous les chiffres clés
+const secondary = items => `<p class="secondary">${items.map(([v, l]) => `<span><strong>${v}</strong> ${l}</span>`).join('')}</p>`;
+// Un graphique par série, chacun à sa propre échelle (deux séries côte à côte trompaient l'œil)
+function monthChart(title, perMonth, key, cls, fmt = n => n) {
+  const max = Math.max(...perMonth.map(p => p[key] || 0)) || 1;
+  return `<div class="section card">
+      <h2>${title} · 12 derniers mois</h2>
+      <div class="chart">${perMonth.map(p => `
+        <div class="col ${p.m === selected ? 'on' : ''} ${isCurrent(p.m) ? 'partial' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')}${isCurrent(p.m) ? ' (en cours)' : ''} : ${fmt(p[key] || 0)}">
+          <div class="bars"><span class="bar ${cls}" style="height:${(p[key] || 0) / max * 100}%"></span></div>
+          <span class="n">${p[key] ? fmt(p[key]) : ''}</span>
+          <span class="m">${monthLabel(p.m)}</span>
+        </div>`).join('')}</div>
+    </div>`;
+}
+const topButtons = extra => `<div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">${extra || ''}<button onclick="Admin.reload()">Actualiser</button><button onclick="Admin.signOut()">Se déconnecter</button></div>`;
 
 // ----- Collection : calculs repris à l'identique de l'ancienne page admin -----
 const usd = n => n ? `${n < 0.995 ? n.toFixed(3) : n.toFixed(2)} $` : '0 $';
@@ -234,7 +298,7 @@ function dailySection(daily, error) {
   const used = t.count || 0;
   const pct = Math.min(100, used / limits.global * 100);
   const max = Math.max(limits.global, ...days.map(d => (byDay[d] || {}).count || 0));
-  const emails = Object.fromEntries(docs.map(u => [u.id, u.email || u.id]));
+  const emails = Object.fromEntries((APPS.collection.docs || docs).map(u => [u.id, u.email || u.id]));
   const sel = byDay[selectedDay] || {};
   const rows = Object.entries(sel.users || {}).map(([uid, u]) => ({ uid, email: emails[uid] || uid, ...u }))
     .sort((a, b) => (b.count || 0) - (a.count || 0) || (b.blocked || 0) - (a.blocked || 0));
@@ -287,6 +351,31 @@ function dailySection(daily, error) {
     </div>`;
 }
 
+// Points à surveiller dans l'exploitation : la section repliée s'ouvre d'elle-même s'il y en a
+function opsAlerts(a) {
+  if (a.dailyError) return ['suivi quotidien illisible'];
+  const t = (a.daily || []).find(d => d.id === parisDay()) || {};
+  const limits = t.limits || { user: 5, global: 30 };
+  const out = [];
+  if ((t.count || 0) >= limits.global * 0.8) out.push(`${t.count} demandes sur ${limits.global} aujourd'hui`);
+  if (t.blockedGlobal) out.push(`${t.blockedGlobal} bloquée(s) par le plafond global`);
+  if (t.failed) out.push(`${t.failed} échec(s) aujourd'hui`);
+  if (t.appCheckMissing) out.push(`${t.appCheckMissing} demande(s) sans App Check aujourd'hui`);
+  const full = (a.docs || []).filter(u => (u.docBytes || 0) >= 0.8 * 1024 * 1024).length;
+  if (full) out.push(`${full} compte(s) à plus de 80 % de la limite de 1 Mo`);
+  return out;
+}
+function opsSection(a) {
+  const alerts = opsAlerts(a);
+  return `<details class="ops" ${alerts.length ? 'open' : ''}>
+      <summary><h2>Exploitation IA · plafonds, coût du jour, App Check</h2>${alerts.length
+        ? `<p class="alert">À surveiller : ${esc(alerts.join(' · '))}</p>`
+        : `<p class="note">Rien à signaler aujourd'hui. Chiffres réels, ton compte compris.</p>`}</summary>
+      ${dailySection(a.daily, a.dailyError)}
+    </details>`;
+}
+
+const rate = (n, of) => of ? `${Math.round(n / of * 100)} %` : '–';
 function recoSection(stats, perMonth) {
   const maxCost = Math.max(0.0001, ...perMonth.map(p => p.recoCost));
   const { colors, ranked, totals } = recoColors(perMonth);
@@ -314,11 +403,17 @@ function recoSection(stats, perMonth) {
 
     <div class="section card">
       <h2>Recommandations en ${monthLabel(selected, 'long')}</h2>
+      <div class="kpis" style="margin-bottom:14px;">
+        ${kpiCard(stats.recoAdded, 'Suggestions ajoutées à la wishlist')}
+        ${kpiCard(rate(stats.recoAdded, stats.recoAdded + stats.recoDismissed), "Taux d'acceptation")}
+        ${kpiCard(stats.recoAdded ? usd(stats.recoCost / stats.recoAdded) : '–', 'Coût par suggestion ajoutée', '', 'ai')}
+        ${kpiCard(stats.reco, `Demandes (${stats.recoUsers} compte${stats.recoUsers > 1 ? 's' : ''})`, '', 'ai')}
+      </div>
       ${rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Échecs</th><th class="num">Bloquées (limite du compte)</th><th class="num">Bloquées (plafond global)</th><th class="num">Ajoutées à la wishlist</th><th class="num">Refusées</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière demande</th></tr></thead>
-        <tbody>${rows.map(r => `<tr><td><span class="dot" style="background:${colors[r.email] || OTHERS_COLOR}"></span>${esc(r.email)}</td><td class="num">${r.reco}</td><td class="num">${r.recoFailed}</td><td class="num">${r.recoBlocked}</td><td class="num">${r.recoBlockedGlobal}</td><td class="num">${r.recoAdded}</td><td class="num">${r.recoDismissed}</td><td class="num">${r.recoTokens.toLocaleString('fr-FR')}</td><td class="num">${usd(r.recoCost)}</td><td>${dateTimeLabel(r.recoLastAt)}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>E-mail</th><th class="num">Demandes</th><th class="num">Échecs</th><th class="num">Bloquées (limite du compte)</th><th class="num">Bloquées (plafond global)</th><th class="num">Ajoutées à la wishlist</th><th class="num">Refusées</th><th class="num">Acceptation</th><th class="num">Tokens</th><th class="num">Coût</th><th>Dernière demande</th></tr></thead>
+        <tbody>${rows.map(r => `<tr><td><span class="dot" style="background:${colors[r.email] || OTHERS_COLOR}"></span>${esc(r.email)}</td><td class="num">${r.reco}</td><td class="num">${r.recoFailed}</td><td class="num">${r.recoBlocked}</td><td class="num">${r.recoBlockedGlobal}</td><td class="num">${r.recoAdded}</td><td class="num">${r.recoDismissed}</td><td class="num">${rate(r.recoAdded, r.recoAdded + r.recoDismissed)}</td><td class="num">${r.recoTokens.toLocaleString('fr-FR')}</td><td class="num">${usd(r.recoCost)}</td><td>${dateTimeLabel(r.recoLastAt)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<p class="note">Aucune demande de recommandations ce mois-ci.</p>'}
-      <p class="note" style="margin-top:12px;">${stats.reco ? `En moyenne, une demande a coûté <strong>${usd(avg)}</strong> ce mois-ci. ` : ''}Le coût est estimé d'après la quantité de texte traitée par Claude Sonnet 5.5, mesurée en <em>tokens</em> (un token ≈ ¾ de mot). Anthropic facture 2 $ par million de tokens envoyés à Claude (la collection et les consignes) et 10 $ par million de tokens qu'il écrit (les suggestions et sa réflexion). La facture réelle est sur <a href="https://platform.claude.com/usage" target="_blank" rel="noopener" style="color:var(--accent)">la console Anthropic</a>. Limites : 5 demandes par compte et 30 au total par jour.</p>
+      <p class="note" style="margin-top:12px;">Taux d'acceptation : suggestions ajoutées à la wishlist parmi celles ajoutées ou refusées (les suggestions laissées sans réponse ne comptent pas). ${stats.reco ? `En moyenne, une demande a coûté <strong>${usd(avg)}</strong> ce mois-ci. ` : ''}Le coût est estimé d'après la quantité de texte traitée par Claude Sonnet 5.5, mesurée en <em>tokens</em> (un token ≈ ¾ de mot). Anthropic facture 2 $ par million de tokens envoyés à Claude (la collection et les consignes) et 10 $ par million de tokens qu'il écrit (les suggestions et sa réflexion). La facture réelle est sur <a href="https://platform.claude.com/usage" target="_blank" rel="noopener" style="color:var(--accent)">la console Anthropic</a>. Limites : 5 demandes par compte et 30 au total par jour.</p>
     </div>`;
 }
 
@@ -356,7 +451,8 @@ function monthStats(m) {
   const sum = k => rows.reduce((n, r) => n + r[k], 0);
   return {
     rows: rows.sort((a, b) => b.sessions - a.sessions || b.created - a.created),
-    active: rows.filter(r => r.sessions > 0).length,
+    // Actif : au moins une action enregistrée dans le mois (ouverture, ajout, modification, recos), comme pour Routine
+    active: rows.length,
     sessions: sum('sessions'), created: sum('created'), modified: sum('modified'), deleted: sum('deleted'),
     reco: sum('reco'), recoFailed: sum('recoFailed'), recoBlocked: sum('recoBlocked'), recoAdded: sum('recoAdded'),
     recoDismissed: sum('recoDismissed'), recoCost: sum('recoCost'),
@@ -414,40 +510,29 @@ function renderCollection(docs) {
   if (!selected) selected = months[months.length - 1];
   const stats = monthStats(selected);
   const perMonth = months.map(m => ({ m, ...monthStats(m) }));
-  const maxUsers = Math.max(1, ...perMonth.map(p => p.active));
-  const maxCreated = Math.max(1, ...perMonth.map(p => p.created));
+  const prev = monthStats(prevMonthKey(selected));
   const firstTracked = Math.min(...docs.map(u => Math.min(...Object.values(u.months || {}).map(x => x.lastSeen || Infinity))));
 
   return `
     <div class="top">
-      <div><h1>Suivi d'utilisation</h1><p class="sub">Collection · ${docs.length} compte${docs.length > 1 ? 's' : ''} connu${docs.length > 1 ? 's' : ''}</p></div>
-      <div style="display:flex; gap:8px;"><button onclick="Admin.reload()">Actualiser</button><button onclick="Admin.signOut()">Se déconnecter</button></div>
+      <div><h1>Suivi d'utilisation</h1><p class="sub">Collection · ${accountsLabel(docs.length)}</p></div>
+      ${topButtons(meToggle())}
     </div>
 
     <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
 
     <div class="kpis">
-      <div class="card kpi"><div class="v">${stats.active}</div><div class="l">Utilisateurs actifs</div></div>
-      <div class="card kpi"><div class="v">${stats.created}</div><div class="l">Éléments créés</div></div>
-      <div class="card kpi"><div class="v">${stats.modified}</div><div class="l">Éléments modifiés</div></div>
-      <div class="card kpi"><div class="v">${stats.deleted}</div><div class="l">Éléments supprimés</div></div>
-      <div class="card kpi"><div class="v">${stats.sessions}</div><div class="l">Ouvertures de l'appli</div></div>
-      <div class="card kpi ai"><div class="v">${stats.reco}</div><div class="l">Demandes de recos (${stats.recoUsers} compte${stats.recoUsers > 1 ? 's' : ''})</div></div>
-      <div class="card kpi ai"><div class="v">${usd(stats.recoCost)}</div><div class="l">Coût IA du mois</div></div>
+      ${kpiCard(stats.active, 'Utilisateurs actifs', deltaHtml(stats.active, prev.active, selected))}
+      ${kpiCard(stats.created, 'Éléments créés', deltaHtml(stats.created, prev.created, selected))}
+      ${kpiCard(stats.recoAdded, 'Recos ajoutées à la wishlist', deltaHtml(stats.recoAdded, prev.recoAdded, selected), 'ai')}
+      ${kpiCard(usd(stats.recoCost), 'Coût IA du mois', deltaHtml(stats.recoCost, prev.recoCost, selected, usd, true), 'ai')}
     </div>
+    ${secondary([[stats.sessions, "ouvertures de l'appli"], [stats.modified, 'éléments modifiés'], [stats.deleted, 'supprimés'], [stats.reco, `demandes de recos (${stats.recoUsers} compte${stats.recoUsers > 1 ? 's' : ''})`]])}
+    ${partialNote(selected)}
 
-    <div class="section card">
-      <h2>12 derniers mois</h2>
-      <div class="chart">${perMonth.map(p => `
-        <div class="col ${p.m === selected ? 'on' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')} : ${p.active} utilisateur(s), ${p.created} créé(s)">
-          <div class="bars">
-            <span class="bar users" style="height:${p.active / maxUsers * 100}%"></span>
-            <span class="bar created" style="height:${p.created / maxCreated * 100}%"></span>
-          </div>
-          <span class="n">${p.active || ''}</span>
-          <span class="m">${monthLabel(p.m)}</span>
-        </div>`).join('')}</div>
-      <div class="legend"><span class="u">Utilisateurs actifs</span><span class="c">Éléments créés</span></div>
+    <div class="charts2">
+      ${monthChart('Utilisateurs actifs', perMonth, 'active', 'users')}
+      ${monthChart('Éléments créés', perMonth, 'created', 'created')}
     </div>
 
     <div class="section card">
@@ -458,11 +543,11 @@ function renderCollection(docs) {
       </table></div>` : '<p class="note">Aucune activité ce mois-ci.</p>'}
     </div>
 
-    ${dailySection(APPS.collection.daily, APPS.collection.dailyError)}
-
     ${recoSection(stats, perMonth)}
 
     ${typesSection(stats)}
+
+    ${opsSection(APPS.collection)}
 
     <div class="section card">
       <h2>Tous les comptes</h2>
@@ -472,7 +557,7 @@ function renderCollection(docs) {
       </table></div>
     </div>
 
-    <p class="note" style="margin-top:20px;">Les éléments créés sont comptés d'après leur date d'ajout (historique complet, hors éléments supprimés). Les ouvertures, modifications et suppressions ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date.</p>`;
+    <p class="note" style="margin-top:20px;">Les éléments créés sont comptés d'après leur date d'ajout (historique complet, hors éléments supprimés). Les ouvertures, modifications et suppressions ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date. Utilisateur actif : au moins une action enregistrée dans le mois.</p>`;
 }
 
 
@@ -489,7 +574,8 @@ function routineMonth(m) {
   const sum = k => rows.reduce((n, r) => n + r[k], 0);
   return {
     rows: rows.sort((a, b) => b.days - a.days || b.opens - a.opens),
-    active: rows.filter(r => r.opens || r.days).length,
+    // Actif : au moins une action enregistrée dans le mois (ouverture, séance, routine lancée), comme pour Collection
+    active: rows.length,
     opens: sum('opens'), routines: sum('routines'), days: sum('days'), exercises: sum('exercises'), sets: sum('sets'), cardioMin: sum('cardioMin'),
   };
 }
@@ -498,36 +584,25 @@ function renderRoutine() {
   if (!selected) selected = months[months.length - 1];
   const s = routineMonth(selected);
   const perMonth = months.map(m => ({ m, ...routineMonth(m) }));
-  const maxUsers = Math.max(1, ...perMonth.map(p => p.active));
-  const maxDays = Math.max(1, ...perMonth.map(p => p.days));
+  const prev = routineMonth(prevMonthKey(selected));
   const firstTracked = Math.min(...docs.map(u => u.firstSeen || Infinity));
   return `
     <div class="top">
-      <div><h1>Suivi d'utilisation</h1><p class="sub">Routine · ${docs.length} compte${docs.length > 1 ? 's' : ''} connu${docs.length > 1 ? 's' : ''}</p></div>
-      <div style="display:flex; gap:8px;"><button onclick="Admin.reload()">Actualiser</button><button onclick="Admin.signOut()">Se déconnecter</button></div>
+      <div><h1>Suivi d'utilisation</h1><p class="sub">Routine · ${accountsLabel(docs.length)}</p></div>
+      ${topButtons(meToggle())}
     </div>
     <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
     <div class="kpis">
-      <div class="card kpi"><div class="v">${s.active}</div><div class="l">Utilisateurs actifs</div></div>
-      <div class="card kpi"><div class="v">${s.opens}</div><div class="l">Ouvertures de l'appli</div></div>
-      <div class="card kpi"><div class="v">${s.days}</div><div class="l">Jours d'entraînement</div></div>
-      <div class="card kpi"><div class="v">${s.exercises}</div><div class="l">Exercices notés</div></div>
-      <div class="card kpi"><div class="v">${s.sets}</div><div class="l">Séries</div></div>
-      <div class="card kpi"><div class="v">${s.cardioMin}</div><div class="l">Minutes de cardio</div></div>
-      <div class="card kpi"><div class="v">${s.routines}</div><div class="l">Routines lancées</div></div>
+      ${kpiCard(s.active, 'Utilisateurs actifs', deltaHtml(s.active, prev.active, selected))}
+      ${kpiCard(s.days, "Jours d'entraînement", deltaHtml(s.days, prev.days, selected))}
+      ${kpiCard(s.exercises, 'Exercices notés', deltaHtml(s.exercises, prev.exercises, selected))}
+      ${kpiCard(s.routines, 'Routines lancées', deltaHtml(s.routines, prev.routines, selected))}
     </div>
-    <div class="section card">
-      <h2>12 derniers mois</h2>
-      <div class="chart">${perMonth.map(p => `
-        <div class="col ${p.m === selected ? 'on' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')} : ${p.active} utilisateur(s), ${p.days} jour(s) d'entraînement">
-          <div class="bars">
-            <span class="bar users" style="height:${p.active / maxUsers * 100}%"></span>
-            <span class="bar days" style="height:${p.days / maxDays * 100}%"></span>
-          </div>
-          <span class="n">${p.active || ''}</span>
-          <span class="m">${monthLabel(p.m)}</span>
-        </div>`).join('')}</div>
-      <div class="legend"><span class="u">Utilisateurs actifs</span><span class="d">Jours d'entraînement</span></div>
+    ${secondary([[s.opens, "ouvertures de l'appli"], [s.sets, 'séries'], [s.cardioMin, 'minutes de cardio']])}
+    ${partialNote(selected)}
+    <div class="charts2">
+      ${monthChart('Utilisateurs actifs', perMonth, 'active', 'users')}
+      ${monthChart("Jours d'entraînement", perMonth, 'days', 'days')}
     </div>
     <div class="section card">
       <h2>Détail de ${monthLabel(selected, 'long')}</h2>
@@ -543,7 +618,7 @@ function renderRoutine() {
         <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.sessionCount || 0}</td><td class="num">${u.routineCount || 0}</td><td class="num">${u.customCount || 0}</td><td class="num">${u.goalsCount || 0}</td><td>${esc(u.lang || '')}</td></tr>`).join('')}</tbody>
       </table></div>
     </div>
-    <p class="note" style="margin-top:20px;">Jours d'entraînement, exercices, séries et minutes de cardio sont recalculés d'après l'historique complet des séances. Les ouvertures et routines lancées ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date.</p>`;
+    <p class="note" style="margin-top:20px;">Jours d'entraînement, exercices, séries et minutes de cardio sont recalculés d'après l'historique complet des séances. Les ouvertures et routines lancées ne sont comptées que depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''}. Un compte n'apparaît qu'après sa première ouverture de l'appli depuis cette date. Utilisateur actif : au moins une action enregistrée dans le mois.</p>`;
 }
 
 // Place occupée par une collection sur le maximum de 1 Mo par compte, en rouge à partir de 80 %
@@ -746,14 +821,16 @@ const SITE = {
   pages: [['/', 'Accueil'], ['/collection.html', 'Ma Collection'], ['/about.html', 'Qui suis-je ?']],
   clicks: [['clic-demo', 'Essayer sans compte'], ['clic-creer-compte', 'Créer un compte'], ['clic-connexion', 'Se connecter']],
   linkedin: 'clic-linkedin',
-  totals: null, detail: {}, error: null, loading: false,
+  totals: null, detail: {}, prevToDate: null, error: null, loading: false,
 };
 const siteDash = () => `https://${SITE.code}.goatcounter.com`;
-// Visiteurs d'une page (ou TOTAL pour tout le site) sur un mois ; 0 si la page n'a encore aucune visite
-async function siteCount(path, m) {
+// Visiteurs d'une page (ou TOTAL pour tout le site) sur un mois, ou sur ses `day` premiers jours ;
+// 0 si la page n'a encore aucune visite
+async function siteCount(path, m, day) {
   const start = `${m}-01`;
-  const last = new Date(+m.slice(0, 4), +m.slice(5), 0);
-  const end = m === monthKey(new Date()) ? parisDay() : `${m}-${String(last.getDate()).padStart(2, '0')}`;
+  const last = new Date(+m.slice(0, 4), +m.slice(5), 0).getDate();
+  const end = day ? `${m}-${String(Math.min(day, last)).padStart(2, '0')}`
+    : m === monthKey(new Date()) ? parisDay() : `${m}-${String(last).padStart(2, '0')}`;
   const res = await fetch(`${siteDash()}/counter/${encodeURIComponent(path)}.json?start=${start}&end=${end}`);
   if (res.status === 404) return 0;
   if (!res.ok) throw new Error(res.status === 403 || res.status === 400
@@ -770,6 +847,8 @@ async function loadSite() {
       SITE.totals = Object.fromEntries(months.map((m, i) => [m, counts[i]]));
     }
     const m = selected || lastMonths(1)[0];
+    // Mois en cours : le mois précédent sur les mêmes jours, pour une comparaison juste
+    if (SITE.prevToDate == null) SITE.prevToDate = await siteCount('TOTAL', prevMonthKey(monthKey(new Date())), new Date().getDate());
     if (!SITE.detail[m]) {
       const keys = [...SITE.pages, ...SITE.clicks].map(([p]) => p).concat(SITE.linkedin);
       const counts = await Promise.all(keys.map(p => siteCount(p, m)));
@@ -797,27 +876,19 @@ function renderSite() {
   const d = SITE.detail[selected];
   if (!SITE.totals || !d) { loadSite(); return head + '<p class="note">Chargement…</p>'; }
   const total = SITE.totals[selected] || 0;
-  const maxV = Math.max(1, ...months.map(m => SITE.totals[m] || 0));
+  const prevTotal = isCurrent(selected) ? SITE.prevToDate : SITE.totals[prevMonthKey(selected)];
   const appClicks = SITE.clicks.reduce((n, [p]) => n + d[p], 0);
   return head + `
     <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
     <div class="kpis">
-      <div class="card kpi"><div class="v">${total}</div><div class="l">Visiteurs</div></div>
+      ${kpiCard(total, 'Visiteurs', deltaHtml(total, prevTotal, selected))}
       <div class="card kpi"><div class="v">${appClicks}</div><div class="l">Clics vers Ma Collection</div></div>
       <div class="card kpi"><div class="v">${pct(appClicks, total)}</div><div class="l">Visiteurs qui cliquent</div></div>
       <div class="card kpi"><div class="v">${d['clic-creer-compte']}</div><div class="l">Clics « Créer un compte »</div></div>
       <div class="card kpi"><div class="v">${d[SITE.linkedin]}</div><div class="l">Clics vers LinkedIn</div></div>
     </div>
-    <div class="section card">
-      <h2>12 derniers mois</h2>
-      <div class="chart">${months.map(m => `
-        <div class="col ${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')" title="${monthLabel(m, 'long')} : ${SITE.totals[m] || 0} visiteur(s)">
-          <div class="bars"><span class="bar users" style="height:${(SITE.totals[m] || 0) / maxV * 100}%"></span></div>
-          <span class="n">${SITE.totals[m] || ''}</span>
-          <span class="m">${monthLabel(m)}</span>
-        </div>`).join('')}</div>
-      <div class="legend"><span class="u">Visiteurs</span></div>
-    </div>
+    ${partialNote(selected, true)}
+    ${monthChart('Visiteurs', months.map(m => ({ m, visitors: SITE.totals[m] || 0 })), 'visitors', 'users')}
     <div class="section card">
       <h2>Détail de ${monthLabel(selected, 'long')}</h2>
       <div class="table-wrap"><table>
@@ -860,13 +931,18 @@ const Admin = {
   },
   signOut() { Object.values(APPS).forEach(a => a.auth.signOut()); },
   pick(m) { selected = m; draw(); },
+  toggleMe(on) {
+    includeMe = on;
+    try { localStorage.setItem('admin-include-me', on ? '1' : '0'); } catch (e) {}
+    draw();
+  },
   select(key) {
     tab = key; selected = null;
     try { localStorage.setItem('admin-tab', key); } catch (e) {}
     draw();
   },
   async reload() {
-    if (tab === 'site') { SITE.totals = null; SITE.detail = {}; SITE.error = null; draw(); return; }
+    if (tab === 'site') { SITE.totals = null; SITE.detail = {}; SITE.prevToDate = null; SITE.error = null; draw(); return; }
     const a = APPS[tab]; a.docs = null; a.error = null; a.daily = null; a.dailyError = null; draw(); await load(tab); },
   pickDay(d) { selectedDay = d; draw(); },
   async copyRules(key, btn) { try { await navigator.clipboard.writeText(rulesFor(key, APPS[key].user.uid)); btn.textContent = 'Copié !'; } catch (e) {} },
@@ -910,7 +986,7 @@ function draw() {
   else if (a.error === 'rules') body = rulesHtml(tab);
   else if (a.error) body = `<p class="error">Impossible de charger les statistiques : ${esc(a.error)}</p>`;
   else if (!a.docs) { body = '<p class="note">Chargement…</p>'; }
-  else { docs = a.docs; body = tab === 'collection' ? renderCollection(docs) : renderRoutine(); }
+  else { docs = withoutMe(a); body = tab === 'collection' ? renderCollection(docs) : renderRoutine(); }
   root.innerHTML = tabs + body;
 }
 
