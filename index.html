@@ -349,6 +349,8 @@ function monthStats(m) {
       recoTokens: (mm.recoTokensIn || 0) + (mm.recoTokensOut || 0),
       recoCost: mm.recoCost || 0,
       recoLastAt: mm.recoLastAt || 0,
+      typesChosen: mm.typesChosen || 0,
+      typesSkipped: mm.typesSkipped || 0,
     };
   }).filter(r => r.sessions || r.created || r.modified || r.deleted || r.reco || r.recoFailed || r.recoBlocked || r.recoBlockedGlobal);
   const sum = k => rows.reduce((n, r) => n + r[k], 0);
@@ -359,7 +361,50 @@ function monthStats(m) {
     reco: sum('reco'), recoFailed: sum('recoFailed'), recoBlocked: sum('recoBlocked'), recoAdded: sum('recoAdded'),
     recoDismissed: sum('recoDismissed'), recoCost: sum('recoCost'),
     recoUsers: rows.filter(r => r.reco || r.recoFailed || r.recoBlocked || r.recoBlockedGlobal).length,
+    typesChosen: sum('typesChosen'), typesSkipped: sum('typesSkipped'),
   };
+}
+
+// ----- Collection : sections affichées (« Mes collections ») -----
+// Chaque compte envoie à chaque ouverture, pour chaque type, le nombre de ses profils qui
+// l'affichent (types) et le nombre de profils qui ont fait un choix (typesCustom).
+const TYPE_NAMES = { livre: 'Livres', film: 'Films', serie: 'Séries', jeu: 'Jeux' };
+
+function shownTypes(u) {
+  return Object.keys(TYPE_NAMES).filter(ty => (u.types || {})[ty] > 0);
+}
+
+function typesLabel(u) {
+  if (!u.types) return '–';
+  const shown = shownTypes(u);
+  return shown.length === Object.keys(TYPE_NAMES).length ? 'Toutes' : shown.map(ty => TYPE_NAMES[ty]).join(', ');
+}
+
+function typesSection(stats) {
+  const known = docs.filter(u => u.types);
+  const custom = known.filter(u => u.typesCustom > 0).length;
+  const single = known.filter(u => shownTypes(u).length === 1).length;
+  const answered = stats.typesChosen + stats.typesSkipped;
+  return `
+    <div class="section card">
+      <h2>Sections affichées (Mes collections)</h2>
+      <div class="kpis">
+        <div class="card kpi"><div class="v">${stats.typesChosen}</div><div class="l">Accueil en ${monthLabel(selected, 'long')} : sections choisies</div></div>
+        <div class="card kpi"><div class="v">${stats.typesSkipped}</div><div class="l">Accueil passé (tout afficher)${answered ? ` · ${Math.round(stats.typesSkipped / answered * 100)} %` : ''}</div></div>
+        <div class="card kpi"><div class="v">${custom}</div><div class="l">Comptes avec un choix enregistré</div></div>
+        <div class="card kpi"><div class="v">${single}</div><div class="l">Comptes avec une seule section</div></div>
+      </div>
+      ${known.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Section</th><th class="num">Comptes qui l'affichent</th><th class="num">Part</th></tr></thead>
+        <tbody>${Object.entries(TYPE_NAMES).map(([ty, name]) => {
+          const n = known.filter(u => (u.types || {})[ty] > 0).length;
+          return `<tr><td>${name}</td><td class="num">${n} / ${known.length}</td><td class="num">${Math.round(n / known.length * 100)} %</td></tr>`;
+        }).join('')}</tbody>
+      </table></div>` : ''}
+      <p class="note">${known.length
+        ? `Comptes qui affichent chaque section, parmi les ${known.length} compte${known.length > 1 ? 's' : ''} ouverts depuis la mise en place de ce suivi. Le choix d'un compte est mis à jour à sa prochaine ouverture de l'appli.`
+        : 'Pas encore de données : elles arrivent quand les comptes ouvrent la nouvelle version de l\'appli.'}</p>
+    </div>`;
 }
 
 
@@ -417,11 +462,13 @@ function renderCollection(docs) {
 
     ${recoSection(stats, perMonth)}
 
+    ${typesSection(stats)}
+
     <div class="section card">
       <h2>Tous les comptes</h2>
       <div class="table-wrap"><table>
-        <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Éléments</th><th class="num">Profils</th><th class="num" title="Place occupée sur le maximum de 1 Mo par compte (limite de Firestore)">Taille</th></tr></thead>
-        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td><td class="num">${sizeLabel(u.docBytes)}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Éléments</th><th class="num">Profils</th><th>Sections</th><th class="num" title="Place occupée sur le maximum de 1 Mo par compte (limite de Firestore)">Taille</th></tr></thead>
+        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td><td>${typesLabel(u)}</td><td class="num">${sizeLabel(u.docBytes)}</td></tr>`).join('')}</tbody>
       </table></div>
     </div>
 
@@ -544,10 +591,12 @@ service cloud.firestore {
       }
       function validMonth(after, before) {
         return after.diff(before).affectedKeys()
-                 .hasOnly(['sessions', 'modified', 'deleted', 'recoAdded', 'recoDismissed', 'lastSeen'])
+                 .hasOnly(['sessions', 'modified', 'deleted', 'recoAdded', 'recoDismissed',
+                           'typesChosen', 'typesSkipped', 'lastSeen'])
             && step(after, before, 'sessions') && step(after, before, 'modified')
             && step(after, before, 'deleted') && step(after, before, 'recoAdded')
-            && step(after, before, 'recoDismissed');
+            && step(after, before, 'recoDismissed') && step(after, before, 'typesChosen')
+            && step(after, before, 'typesSkipped');
       }
       function validUsage(after, before) {
         let changed = after.diff(before).affectedKeys();
@@ -557,7 +606,7 @@ service cloud.firestore {
         let m2 = ym(request.time + duration.value(14, 'h'));
         let changedMonths = months.diff(old).affectedKeys();
         return changed.hasOnly(['email', 'firstSeen', 'lastSeen', 'createdByMonth', 'itemCount',
-                                'profileCount', 'docBytes', 'months'])
+                                'profileCount', 'docBytes', 'types', 'typesCustom', 'months'])
             && (!('email' in changed) || after.email == request.auth.token.get('email', ''))
             && (!('firstSeen' in changed) || !('firstSeen' in before))
             && changedMonths.hasOnly([m1, m2]) && changedMonths.size() <= 1
