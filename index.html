@@ -137,8 +137,9 @@ for (const [key, a] of Object.entries(APPS)) {
 }
 const root = document.getElementById('root');
 let tab = 'collection';
-try { tab = localStorage.getItem('admin-tab') || (location.hash.slice(1) in APPS ? location.hash.slice(1) : 'collection'); } catch (e) {}
-if (!(tab in APPS)) tab = 'collection';
+const isTab = k => k in APPS || k === 'site';
+try { tab = localStorage.getItem('admin-tab') || (isTab(location.hash.slice(1)) ? location.hash.slice(1) : 'collection'); } catch (e) {}
+if (!isTab(tab)) tab = 'collection';
 let selected = null;
 let docs = []; // statistiques de l'onglet affiché (utilisées par les fonctions de Collection)
 
@@ -598,6 +599,105 @@ function rulesHtml(key) {
     </div>`;
 }
 
+// ----- Site perso : visiteurs mesurés par GoatCounter (sans cookie), lus par son compteur public -----
+// Le compteur public (réglage « Allow adding visitor counts on your website ») ne demande aucune clé,
+// donc rien de secret dans cette page. Il ne donne que des totaux, mis en cache jusqu'à 4 h ;
+// les provenances (LinkedIn, Google…) se lisent dans le tableau de bord GoatCounter.
+const SITE = {
+  name: 'Site', url: 'https://marlenemenoire.com/', code: 'marlenemenoire',
+  pages: [['/', 'Accueil'], ['/collection.html', 'Ma Collection'], ['/about.html', 'Qui suis-je ?']],
+  clicks: [['clic-demo', 'Essayer sans compte'], ['clic-creer-compte', 'Créer un compte'], ['clic-connexion', 'Se connecter']],
+  linkedin: 'clic-linkedin',
+  totals: null, detail: {}, error: null, loading: false,
+};
+const siteDash = () => `https://${SITE.code}.goatcounter.com`;
+// Visiteurs d'une page (ou TOTAL pour tout le site) sur un mois ; 0 si la page n'a encore aucune visite
+async function siteCount(path, m) {
+  const start = `${m}-01`;
+  const last = new Date(+m.slice(0, 4), +m.slice(5), 0);
+  const end = m === monthKey(new Date()) ? parisDay() : `${m}-${String(last.getDate()).padStart(2, '0')}`;
+  const res = await fetch(`${siteDash()}/counter/${encodeURIComponent(path)}.json?start=${start}&end=${end}`);
+  if (res.status === 404) return 0;
+  if (!res.ok) throw new Error(res.status === 403 || res.status === 400
+    ? 'compteur public désactivé ou site GoatCounter introuvable' : `erreur ${res.status}`);
+  return +String((await res.json()).count).replace(/\D/g, '') || 0;
+}
+async function loadSite() {
+  if (SITE.loading) return;
+  SITE.loading = true;
+  try {
+    if (!SITE.totals) {
+      const months = lastMonths(12);
+      const counts = await Promise.all(months.map(m => siteCount('TOTAL', m)));
+      SITE.totals = Object.fromEntries(months.map((m, i) => [m, counts[i]]));
+    }
+    const m = selected || lastMonths(1)[0];
+    if (!SITE.detail[m]) {
+      const keys = [...SITE.pages, ...SITE.clicks].map(([p]) => p).concat(SITE.linkedin);
+      const counts = await Promise.all(keys.map(p => siteCount(p, m)));
+      SITE.detail[m] = Object.fromEntries(keys.map((p, i) => [p, counts[i]]));
+    }
+    SITE.error = null;
+  } catch (e) {
+    // Une adresse inconnue ou un compteur désactivé répond sans autorisation CORS : fetch échoue sans détail
+    SITE.error = e instanceof TypeError ? 'site GoatCounter introuvable ou compteur public désactivé' : e.message;
+  }
+  SITE.loading = false;
+  if (tab === 'site') draw();
+}
+const pct = (n, of) => of ? `${Math.round(n / of * 100)} %` : '–';
+function renderSite() {
+  const months = lastMonths(12);
+  if (!selected) selected = months[months.length - 1];
+  const head = `
+    <div class="top">
+      <div><h1>Suivi d'utilisation</h1><p class="sub">Site perso · <a href="${SITE.url}" target="_blank" rel="noopener" style="color:var(--accent)">marlenemenoire.com</a></p></div>
+      <div style="display:flex; gap:8px;"><a class="btn" href="${siteDash()}" target="_blank" rel="noopener" style="text-decoration:none;">Tableau de bord GoatCounter</a><button onclick="Admin.reload()">Actualiser</button><button onclick="Admin.signOut()">Se déconnecter</button></div>
+    </div>`;
+  if (SITE.error) return head + `<div class="card"><p class="error">Impossible de lire les visites : ${esc(SITE.error)}.</p>
+      <p class="sub" style="margin-top:8px;">Vérifie que le site <strong>${esc(SITE.code)}</strong> existe sur GoatCounter et que le réglage <em>Allow adding visitor counts on your website</em> est coché dans <a href="${siteDash()}/settings/main" target="_blank" rel="noopener" style="color:var(--accent)">ses réglages</a>.</p></div>`;
+  const d = SITE.detail[selected];
+  if (!SITE.totals || !d) { loadSite(); return head + '<p class="note">Chargement…</p>'; }
+  const total = SITE.totals[selected] || 0;
+  const maxV = Math.max(1, ...months.map(m => SITE.totals[m] || 0));
+  const appClicks = SITE.clicks.reduce((n, [p]) => n + d[p], 0);
+  return head + `
+    <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
+    <div class="kpis">
+      <div class="card kpi"><div class="v">${total}</div><div class="l">Visiteurs</div></div>
+      <div class="card kpi"><div class="v">${appClicks}</div><div class="l">Clics vers Ma Collection</div></div>
+      <div class="card kpi"><div class="v">${pct(appClicks, total)}</div><div class="l">Visiteurs qui cliquent</div></div>
+      <div class="card kpi"><div class="v">${d['clic-creer-compte']}</div><div class="l">Clics « Créer un compte »</div></div>
+      <div class="card kpi"><div class="v">${d[SITE.linkedin]}</div><div class="l">Clics vers LinkedIn</div></div>
+    </div>
+    <div class="section card">
+      <h2>12 derniers mois</h2>
+      <div class="chart">${months.map(m => `
+        <div class="col ${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')" title="${monthLabel(m, 'long')} : ${SITE.totals[m] || 0} visiteur(s)">
+          <div class="bars"><span class="bar users" style="height:${(SITE.totals[m] || 0) / maxV * 100}%"></span></div>
+          <span class="n">${SITE.totals[m] || ''}</span>
+          <span class="m">${monthLabel(m)}</span>
+        </div>`).join('')}</div>
+      <div class="legend"><span class="u">Visiteurs</span></div>
+    </div>
+    <div class="section card">
+      <h2>Détail de ${monthLabel(selected, 'long')}</h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Page</th><th class="num">Visiteurs</th><th class="num">Part du site</th></tr></thead>
+        <tbody>${SITE.pages.map(([p, label]) => `<tr><td>${esc(label)} <span class="note">${esc(p)}</span></td><td class="num">${d[p]}</td><td class="num">${pct(d[p], total)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div class="table-wrap" style="margin-top:16px;"><table>
+        <thead><tr><th>Clic vers Ma Collection</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
+        <tbody>${SITE.clicks.map(([p, label]) => `<tr><td>${esc(label)}</td><td class="num">${d[p]}</td><td class="num">${pct(d[p], total)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div class="table-wrap" style="margin-top:16px;"><table>
+        <thead><tr><th>Autre clic</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
+        <tbody><tr><td>Me retrouver sur LinkedIn</td><td class="num">${d[SITE.linkedin]}</td><td class="num">${pct(d[SITE.linkedin], total)}</td></tr></tbody>
+      </table></div>
+    </div>
+    <p class="note" style="margin-top:20px;">Visiteurs uniques estimés par GoatCounter, sans cookie : une même personne sur deux appareils compte deux fois, et les visiteurs avec un bloqueur de pub ne sont pas comptés. Chiffres mis en cache jusqu'à 4 h. Pour ne pas compter tes propres visites, ouvre une fois <a href="${SITE.url}#toggle-goatcounter" target="_blank" rel="noopener" style="color:var(--accent)">le site avec #toggle-goatcounter</a> sur chacun de tes appareils. Provenances des visites : voir le tableau de bord GoatCounter.</p>`;
+}
+
 // ----- Connexion : un seul formulaire, connexion aux deux projets -----
 function loginHtml(message) {
   return `<div class="login card">
@@ -627,7 +727,9 @@ const Admin = {
     try { localStorage.setItem('admin-tab', key); } catch (e) {}
     draw();
   },
-  async reload() { const a = APPS[tab]; a.docs = null; a.error = null; a.daily = null; a.dailyError = null; draw(); await load(tab); },
+  async reload() {
+    if (tab === 'site') { SITE.totals = null; SITE.detail = {}; SITE.error = null; draw(); return; }
+    const a = APPS[tab]; a.docs = null; a.error = null; a.daily = null; a.dailyError = null; draw(); await load(tab); },
   pickDay(d) { selectedDay = d; draw(); },
   async copyRules(key, btn) { try { await navigator.clipboard.writeText(rulesFor(key, APPS[key].user.uid)); btn.textContent = 'Copié !'; } catch (e) {} },
 };
@@ -663,9 +765,10 @@ function draw() {
   const anyUser = Object.values(APPS).some(a => a.user);
   if (!anyUser) { root.innerHTML = loginHtml(Admin.message); return; }
   const a = APPS[tab];
-  const tabs = `<div class="tabs" role="tablist">${Object.entries(APPS).map(([k, x]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? 'on' : ''}" onclick="Admin.select('${k}')">${x.name}${x.user ? '' : '<span class="state">non connecté</span>'}</button>`).join('')}</div>`;
+  const tabs = `<div class="tabs" role="tablist">${Object.entries(APPS).map(([k, x]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? 'on' : ''}" onclick="Admin.select('${k}')">${x.name}${x.user ? '' : '<span class="state">non connecté</span>'}</button>`).join('')}<button role="tab" aria-selected="${tab === 'site'}" class="${tab === 'site' ? 'on' : ''}" onclick="Admin.select('site')">${SITE.name}</button></div>`;
   let body;
-  if (!a.user) body = `<div class="card"><p class="sub">Pas connecté à ${a.name} : ton compte n'existe pas dans ce projet, ou son mot de passe est différent.</p>${Admin.message ? `<p class="error" style="margin-top:8px;">${esc(Admin.message)}</p>` : ''}<p style="margin-top:12px;"><button onclick="Admin.signOut()">Se déconnecter et réessayer</button></p></div>`;
+  if (tab === 'site') body = renderSite();
+  else if (!a.user) body = `<div class="card"><p class="sub">Pas connecté à ${a.name} : ton compte n'existe pas dans ce projet, ou son mot de passe est différent.</p>${Admin.message ? `<p class="error" style="margin-top:8px;">${esc(Admin.message)}</p>` : ''}<p style="margin-top:12px;"><button onclick="Admin.signOut()">Se déconnecter et réessayer</button></p></div>`;
   else if (a.error === 'rules') body = rulesHtml(tab);
   else if (a.error) body = `<p class="error">Impossible de charger les statistiques : ${esc(a.error)}</p>`;
   else if (!a.docs) { body = '<p class="note">Chargement…</p>'; }
