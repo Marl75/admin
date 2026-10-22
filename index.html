@@ -822,7 +822,8 @@ function rulesHtml(key) {
 // les provenances (LinkedIn, Google…) se lisent dans le tableau de bord GoatCounter.
 const SITE = {
   name: 'Site', url: 'https://marlenemenoire.com/', code: 'marlenemenoire',
-  pages: [['/', 'Accueil'], ['/collection.html', 'Ma Collection'], ['/routine.html', 'Routine'], ['/about.html', 'Qui suis-je ?']],
+  // Chaque page existe en anglais (racine) et en français (/fr/…) : les visites des deux sont additionnées
+  pages: [['/', 'Accueil'], ['/collection.html', 'Ma Collection'], ['/routine.html', 'Routine'], ['/about.html', 'Qui suis-je ?'], ['/mentions.html', 'Mentions et confidentialité']],
   clicks: [['clic-demo', 'Essayer sans compte'], ['clic-creer-compte', 'Créer un compte'], ['clic-connexion', 'Se connecter']],
   routineClicks: [['routine-clic-demo', 'Essayer sans compte'], ['routine-clic-creer-compte', 'Créer un compte'], ['routine-clic-connexion', 'Se connecter']],
   linkedin: 'clic-linkedin',
@@ -856,8 +857,10 @@ async function loadSite() {
     if (SITE.prevToDate == null) SITE.prevToDate = await siteCount('TOTAL', prevMonthKey(monthKey(new Date())), new Date().getDate());
     if (!SITE.detail[m]) {
       const keys = [...SITE.pages, ...SITE.clicks, ...SITE.routineClicks].map(([p]) => p).concat(SITE.linkedin);
-      const counts = await Promise.all(keys.map(p => siteCount(p, m)));
+      const frKeys = SITE.pages.map(([p]) => '/fr' + p);
+      const counts = await Promise.all([...keys, ...frKeys].map(p => siteCount(p, m)));
       SITE.detail[m] = Object.fromEntries(keys.map((p, i) => [p, counts[i]]));
+      frKeys.forEach((p, i) => { SITE.detail[m][SITE.pages[i][0]] += counts[keys.length + i]; });
     }
     SITE.error = null;
   } catch (e) {
