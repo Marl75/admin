@@ -822,8 +822,9 @@ function rulesHtml(key) {
 // les provenances (LinkedIn, Google…) se lisent dans le tableau de bord GoatCounter.
 const SITE = {
   name: 'Site', url: 'https://marlenemenoire.com/', code: 'marlenemenoire',
-  pages: [['/', 'Accueil'], ['/collection.html', 'Ma Collection'], ['/about.html', 'Qui suis-je ?']],
+  pages: [['/', 'Accueil'], ['/collection.html', 'Ma Collection'], ['/routine.html', 'Routine'], ['/about.html', 'Qui suis-je ?']],
   clicks: [['clic-demo', 'Essayer sans compte'], ['clic-creer-compte', 'Créer un compte'], ['clic-connexion', 'Se connecter']],
+  routineClicks: [['routine-clic-demo', 'Essayer sans compte'], ['routine-clic-creer-compte', 'Créer un compte'], ['routine-clic-connexion', 'Se connecter']],
   linkedin: 'clic-linkedin',
   totals: null, detail: {}, prevToDate: null, error: null, loading: false,
 };
@@ -854,7 +855,7 @@ async function loadSite() {
     // Mois en cours : le mois précédent sur les mêmes jours, pour une comparaison juste
     if (SITE.prevToDate == null) SITE.prevToDate = await siteCount('TOTAL', prevMonthKey(monthKey(new Date())), new Date().getDate());
     if (!SITE.detail[m]) {
-      const keys = [...SITE.pages, ...SITE.clicks].map(([p]) => p).concat(SITE.linkedin);
+      const keys = [...SITE.pages, ...SITE.clicks, ...SITE.routineClicks].map(([p]) => p).concat(SITE.linkedin);
       const counts = await Promise.all(keys.map(p => siteCount(p, m)));
       SITE.detail[m] = Object.fromEntries(keys.map((p, i) => [p, counts[i]]));
     }
@@ -882,12 +883,14 @@ function renderSite() {
   const total = SITE.totals[selected] || 0;
   const prevTotal = isCurrent(selected) ? SITE.prevToDate : SITE.totals[prevMonthKey(selected)];
   const appClicks = SITE.clicks.reduce((n, [p]) => n + d[p], 0);
+  const routineClicks = SITE.routineClicks.reduce((n, [p]) => n + d[p], 0);
   return head + `
     <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
     <div class="kpis">
       ${kpiCard(total, 'Visiteurs', deltaHtml(total, prevTotal, selected))}
       <div class="card kpi"><div class="v">${appClicks}</div><div class="l">Clics vers Ma Collection</div></div>
-      <div class="card kpi"><div class="v">${pct(appClicks, total)}</div><div class="l">Visiteurs qui cliquent</div></div>
+      <div class="card kpi"><div class="v">${routineClicks}</div><div class="l">Clics vers Routine</div></div>
+      <div class="card kpi"><div class="v">${pct(appClicks + routineClicks, total)}</div><div class="l">Visiteurs qui cliquent vers une appli</div></div>
       <div class="card kpi"><div class="v">${d['clic-creer-compte']}</div><div class="l">Clics « Créer un compte »</div></div>
       <div class="card kpi"><div class="v">${d[SITE.linkedin]}</div><div class="l">Clics vers LinkedIn</div></div>
     </div>
@@ -902,6 +905,10 @@ function renderSite() {
       <div class="table-wrap" style="margin-top:16px;"><table class="aligned"><colgroup><col><col class="num"><col class="num"></colgroup>
         <thead><tr><th>Clic vers Ma Collection</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
         <tbody>${SITE.clicks.map(([p, label]) => `<tr><td>${esc(label)}</td><td class="num">${d[p]}</td><td class="num">${pct(d[p], total)}</td></tr>`).join('')}</tbody>
+      </table></div>
+      <div class="table-wrap" style="margin-top:16px;"><table class="aligned"><colgroup><col><col class="num"><col class="num"></colgroup>
+        <thead><tr><th>Clic vers Routine</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
+        <tbody>${SITE.routineClicks.map(([p, label]) => `<tr><td>${esc(label)}</td><td class="num">${d[p]}</td><td class="num">${pct(d[p], total)}</td></tr>`).join('')}</tbody>
       </table></div>
       <div class="table-wrap" style="margin-top:16px;"><table class="aligned"><colgroup><col><col class="num"><col class="num"></colgroup>
         <thead><tr><th>Autre clic</th><th class="num">Clics</th><th class="num">Pour 100 visiteurs</th></tr></thead>
