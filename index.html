@@ -118,6 +118,22 @@
   details.ops[open] > summary h2::before { content: '▾ '; }
   details.ops .alert { color: #c98500; font-size: 14px; margin-top: 6px; }
   details.ops > summary .note { margin-top: 6px; }
+  /* Onglet Retours : messages « Une idée, un souci ? » envoyés depuis les applis */
+  .tabs .count { font-size: 11px; background: var(--red); color: #1a1426; border-radius: 999px; padding: 1px 7px; margin-left: 6px; font-weight: 700; }
+  .fb-list { display: grid; gap: 12px; }
+  .fb { padding: 16px 18px; }
+  .fb.done { opacity: .6; }
+  .fb-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .fb-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; }
+  .fb-meta { font-size: 12px; color: var(--faint); margin-top: 8px; overflow-wrap: anywhere; }
+  .fb-meta a { color: var(--accent); }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; margin-right: 8px; }
+  .pill.idea { background: rgba(106, 155, 212, .18); color: var(--blue); }
+  .pill.bug { background: rgba(224, 122, 108, .18); color: var(--red); }
+  .pill.other { background: var(--surface); color: var(--dim); border: 1px solid var(--border); }
+  .fb-status { display: inline-flex; gap: 4px; }
+  .fb-status button { padding: 4px 10px; font-size: 12px; border-radius: 999px; }
+  .fb-status button.on { background: var(--accent-soft); border-color: var(--accent); color: #e3cf9f; }
 </style>
 </head>
 <body>
@@ -141,7 +157,7 @@ const APPS = {
     },
   },
   routine: {
-    name: 'Routine', url: 'https://marl75.github.io/fitness-coach/',
+    name: 'Routine', url: 'https://marl75.github.io/fitness-coach/', feedback: true,
     config: {
       apiKey: "AIzaSyAvxvKu02zr-8MCS21_gvDYuF_LqNnzjTM",
       authDomain: "fitcoach-71392.firebaseapp.com",
@@ -158,10 +174,11 @@ for (const [key, a] of Object.entries(APPS)) {
   a.db = a.fb.firestore();
   a.user = undefined; // inconnu tant que Firebase n'a pas répondu
   a.docs = null; a.error = null;
+  a.fbDocs = null; a.fbError = null;
 }
 const root = document.getElementById('root');
 let tab = 'collection';
-const isTab = k => k in APPS || k === 'site';
+const isTab = k => k in APPS || k === 'site' || k === 'retours';
 try { tab = localStorage.getItem('admin-tab') || (isTab(location.hash.slice(1)) ? location.hash.slice(1) : 'collection'); } catch (e) {}
 if (!isTab(tab)) tab = 'collection';
 let selected = null;
@@ -793,6 +810,38 @@ service cloud.firestore {
       allow update: if signedIn(uid) && validUsage(request.resource.data, resource.data);
     }
 
+    // « Une idée, un souci ? » (js/feedback.js) : tout le monde peut envoyer un message, même sans
+    // compte (démo), dans un format contrôlé ; seule l'administratrice peut les lire, changer leur
+    // statut (onglet Retours de la page de suivi) ou les supprimer.
+    match /feedback/{id} {
+      function validFeedback(d) {
+        return d.keys().hasOnly(['app', 'kind', 'text', 'email', 'uid', 'screen', 'lang', 'version', 'ua',
+                                 'demo', 'beta', 'createdAt'])
+            && d.keys().hasAll(['app', 'kind', 'text', 'createdAt'])
+            && d.app == 'routine'
+            && d.kind in ['idea', 'bug', 'other']
+            && d.text is string && d.text.size() > 0 && d.text.size() <= 2000
+            && d.get('email', '') is string && d.get('email', '').size() <= 200
+            // Avec un compte : son identifiant, et son propre e-mail (ou aucun) ; sans compte : ni l'un ni l'autre
+            && (request.auth == null
+                ? d.get('uid', null) == null
+                : d.get('uid', null) == request.auth.uid
+                  && d.get('email', '') in ['', request.auth.token.get('email', '')])
+            && d.get('screen', '') is string && d.get('screen', '').size() <= 20
+            && d.get('lang', 'fr') in ['fr', 'en']
+            && d.get('version', '') is string && d.get('version', '').size() <= 40
+            && d.get('ua', '') is string && d.get('ua', '').size() <= 300
+            && d.get('demo', false) is bool && d.get('beta', false) is bool
+            && d.createdAt == request.time;
+      }
+      // Identifiant automatique de Firestore (repris tel quel dans un bouton de la page de suivi)
+      allow create: if id.matches('^[A-Za-z0-9]{20}$') && validFeedback(request.resource.data);
+      allow read, delete: if request.auth != null && request.auth.uid == '${uid}';
+      allow update: if request.auth != null && request.auth.uid == '${uid}'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && request.resource.data.status in ['new', 'todo', 'done'];
+    }
+
     // Tout le reste est interdit
     match /{document=**} {
       allow read, write: if false;
@@ -921,6 +970,77 @@ function renderSite() {
     <p class="note" style="margin-top:20px;">Visiteurs uniques estimés par GoatCounter, sans cookie : une même personne sur deux appareils compte deux fois, et les visiteurs avec un bloqueur de pub ne sont pas comptés. Chiffres mis en cache jusqu'à 4 h. Pour ne pas compter tes propres visites, ouvre une fois <a href="${SITE.url}#toggle-goatcounter" target="_blank" rel="noopener" style="color:var(--accent)">le site avec #toggle-goatcounter</a> sur chacun de tes appareils. Provenances des visites : voir le tableau de bord GoatCounter.</p>`;
 }
 
+// ----- Retours : messages « Une idée, un souci ? » (js/feedback.js de chaque appli) -----
+// Écrits par n'importe qui (même sans compte) : tout est échappé, et type et statut sont pris dans une liste fixe.
+const FB_KINDS = { idea: 'Idée', bug: 'Bug', other: 'Autre' };
+const FB_STATUS = { new: 'Nouveau', todo: 'À traiter', done: 'Fait' };
+const FB_SCREENS = { today: 'Séance', track: 'Suivi', settings: 'Réglages' };
+let fbFilter = 'all';
+const fbApps = () => Object.entries(APPS).filter(([, a]) => a.feedback && a.user);
+const fbStatus = f => f.status in FB_STATUS ? f.status : 'new';
+const fbNewCount = () => fbApps().reduce((n, [, a]) => n + (a.fbDocs || []).filter(f => fbStatus(f) === 'new').length, 0);
+const fbDate = f => f.createdAt && f.createdAt.toDate ? f.createdAt.toDate() : null;
+// « iPhone · Safari », « Android · Chrome »… assez pour reproduire un bug
+function uaLabel(ua) {
+  ua = String(ua || '');
+  const os = /iPhone|iPad/.test(ua) ? 'iPhone/iPad' : /Android/.test(ua) ? 'Android' : /Mac OS/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : '';
+  const br = /Edg\//.test(ua) ? 'Edge' : /Firefox|FxiOS/.test(ua) ? 'Firefox' : /Chrome|CriOS/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : '';
+  return [os, br].filter(Boolean).join(' · ') || 'navigateur inconnu';
+}
+async function loadFeedback(key) {
+  const a = APPS[key];
+  try {
+    const snap = await a.db.collection('feedback').orderBy('createdAt', 'desc').limit(300).get();
+    a.fbDocs = snap.docs.filter(d => /^[A-Za-z0-9]{20}$/.test(d.id)).map(d => ({ ...d.data(), id: d.id }));
+    a.fbError = null;
+  } catch (e) {
+    a.fbDocs = null;
+    a.fbError = e.code === 'permission-denied' ? 'rules' : e.message;
+  }
+  draw();
+}
+function feedbackCard(key, f) {
+  const kind = f.kind in FB_KINDS ? f.kind : 'other', st = fbStatus(f), d = fbDate(f);
+  const meta = [
+    APPS[key].name,
+    d ? d.toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '',
+    f.version ? `v${esc(f.version)}` : '',
+    FB_SCREENS[f.screen] || esc(f.screen || ''),
+    esc(f.lang || ''),
+    esc(uaLabel(f.ua)),
+    f.beta ? 'version de test' : f.demo ? 'démo' : '',
+  ].filter(Boolean).join(' · ');
+  const who = f.email ? `<a href="mailto:${esc(f.email)}">Répondre à ${esc(f.email)}</a>` : f.uid ? 'Compte connecté, pas de réponse demandée' : 'Anonyme';
+  return `<div class="card fb ${st === 'done' ? 'done' : ''}">
+      <div class="fb-top"><span><span class="pill ${kind}">${FB_KINDS[kind]}</span></span>
+        <span class="fb-status">${Object.entries(FB_STATUS).map(([k, l]) => `<button class="${k === st ? 'on' : ''}" onclick="Admin.setStatus('${key}', '${esc(f.id)}', '${k}')">${l}</button>`).join('')}</span></div>
+      <div class="fb-text">${esc(f.text)}</div>
+      <div class="fb-meta">${meta}<br>${who}</div>
+    </div>`;
+}
+function renderFeedback() {
+  const apps = fbApps();
+  const head = `
+    <div class="top">
+      <div><h1>Retours</h1><p class="sub">Messages « Une idée, un souci ? » envoyés depuis ${Object.values(APPS).filter(a => a.feedback).map(a => a.name).join(', ')}</p></div>
+      ${topButtons('')}
+    </div>`;
+  const blocked = apps.find(([, a]) => a.fbError === 'rules');
+  if (blocked) return head + rulesHtml(blocked[0]);
+  const failed = apps.find(([, a]) => a.fbError);
+  if (failed) return head + `<p class="error">Impossible de charger les retours de ${failed[1].name} : ${esc(failed[1].fbError)}</p>`;
+  if (!apps.length) return head + '<p class="note">Connecte-toi à une appli qui reçoit des retours.</p>';
+  if (apps.some(([, a]) => !a.fbDocs)) return head + '<p class="note">Chargement…</p>';
+  const all = apps.flatMap(([k, a]) => a.fbDocs.map(f => ({ k, f }))).sort((x, y) => (fbDate(y.f) || 0) - (fbDate(x.f) || 0));
+  const filters = { all: 'Tous', idea: 'Idées', bug: 'Bugs', other: 'Autres', open: 'Pas encore faits' };
+  const shown = all.filter(({ f }) => fbFilter === 'all' ? true : fbFilter === 'open' ? fbStatus(f) !== 'done' : (f.kind in FB_KINDS ? f.kind : 'other') === fbFilter);
+  return head + `
+    <div class="months">${Object.entries(filters).map(([k, l]) => `<button class="${k === fbFilter ? 'on' : ''}" onclick="Admin.fbFilter('${k}')">${l}</button>`).join('')}</div>
+    ${shown.length ? `<div class="fb-list">${shown.map(({ k, f }) => feedbackCard(k, f)).join('')}</div>`
+      : `<p class="note">${all.length ? 'Aucun message pour ce filtre.' : 'Aucun message pour l’instant.'}</p>`}
+    <p class="note" style="margin-top:20px;">Chaque message arrive avec la version de l'appli, l'écran ouvert, la langue et le navigateur. L'adresse n'est donnée que si la personne a demandé une réponse. « Démo » : envoyé sans compte, depuis le mode démo.</p>`;
+}
+
 // ----- Connexion : un seul formulaire, connexion aux deux projets -----
 function loginHtml(message) {
   return `<div class="login card">
@@ -957,8 +1077,18 @@ const Admin = {
   },
   async reload() {
     if (tab === 'site') { SITE.totals = null; SITE.detail = {}; SITE.prevToDate = null; SITE.error = null; draw(); return; }
+    if (tab === 'retours') { fbApps().forEach(([k, a]) => { a.fbDocs = null; a.fbError = null; loadFeedback(k); }); draw(); return; }
     const a = APPS[tab]; a.docs = null; a.error = null; a.daily = null; a.dailyError = null; draw(); await load(tab); },
   pickDay(d) { selectedDay = d; draw(); },
+  fbFilter(k) { fbFilter = k; draw(); },
+  async setStatus(key, id, status) {
+    const a = APPS[key], f = (a.fbDocs || []).find(x => x.id === id);
+    if (!f || !(status in FB_STATUS)) return;
+    const before = f.status;
+    f.status = status; draw();
+    try { await a.db.collection('feedback').doc(id).update({ status }); }
+    catch (e) { f.status = before; draw(); alert('Statut non enregistré : ' + e.message); }
+  },
   async copyRules(key, btn) { try { await navigator.clipboard.writeText(rulesFor(key, APPS[key].user.uid)); btn.textContent = 'Copié !'; } catch (e) {} },
 };
 
@@ -993,9 +1123,10 @@ function draw() {
   const anyUser = Object.values(APPS).some(a => a.user);
   if (!anyUser) { root.innerHTML = loginHtml(Admin.message); return; }
   const a = APPS[tab];
-  const tabs = `<div class="tabs" role="tablist">${Object.entries(APPS).map(([k, x]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? 'on' : ''}" onclick="Admin.select('${k}')">${x.name}${x.user ? '' : '<span class="state">non connecté</span>'}</button>`).join('')}<button role="tab" aria-selected="${tab === 'site'}" class="${tab === 'site' ? 'on' : ''}" onclick="Admin.select('site')">${SITE.name}</button></div>`;
+  const tabs = `<div class="tabs" role="tablist">${Object.entries(APPS).map(([k, x]) => `<button role="tab" aria-selected="${k === tab}" class="${k === tab ? 'on' : ''}" onclick="Admin.select('${k}')">${x.name}${x.user ? '' : '<span class="state">non connecté</span>'}</button>`).join('')}<button role="tab" aria-selected="${tab === 'site'}" class="${tab === 'site' ? 'on' : ''}" onclick="Admin.select('site')">${SITE.name}</button><button role="tab" aria-selected="${tab === 'retours'}" class="${tab === 'retours' ? 'on' : ''}" onclick="Admin.select('retours')">Retours${fbNewCount() ? `<span class="count">${fbNewCount()}</span>` : ''}</button></div>`;
   let body;
   if (tab === 'site') body = renderSite();
+  else if (tab === 'retours') body = renderFeedback();
   else if (!a.user) body = `<div class="card"><p class="sub">Pas connecté à ${a.name} : ton compte n'existe pas dans ce projet, ou son mot de passe est différent.</p>${Admin.message ? `<p class="error" style="margin-top:8px;">${esc(Admin.message)}</p>` : ''}<p style="margin-top:12px;"><button onclick="Admin.signOut()">Se déconnecter et réessayer</button></p></div>`;
   else if (a.error === 'rules') body = rulesHtml(tab);
   else if (a.error) body = `<p class="error">Impossible de charger les statistiques : ${esc(a.error)}</p>`;
@@ -1006,9 +1137,10 @@ function draw() {
 
 for (const [key, a] of Object.entries(APPS)) {
   a.auth.onAuthStateChanged(user => {
-    a.user = user || null; a.docs = null; a.error = null;
+    a.user = user || null; a.docs = null; a.error = null; a.fbDocs = null; a.fbError = null;
     draw();
     if (user) load(key);
+    if (user && a.feedback) loadFeedback(key);
   });
 }
 </script>
