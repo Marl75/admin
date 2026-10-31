@@ -1,10 +1,10 @@
-# Suivi d'utilisation
+# Usage tracking
 
-Page d'administration commune à mes applis : **[marl75.github.io/admin](https://marl75.github.io/admin/)**
+Shared admin page for my apps (interface in French): **[marl75.github.io/admin](https://marl75.github.io/admin/)**
 
-- Un onglet par appli : [Collection](https://marl75.github.io/mes-livres/) et [Routine](https://marl75.github.io/fitness-coach/), plus un onglet **Site** pour [marlenemenoire.com](https://marlenemenoire.com/)
-- L'onglet Site lit les visiteurs mesurés par [GoatCounter](https://marlenemenoire.goatcounter.com) (sans cookie) via son compteur public : aucune clé dans la page, réglage « Allow adding visitor counts on your website » à cocher côté GoatCounter
-- Chaque appli a son propre projet Firebase ; la page se connecte aux deux avec le même e-mail et mot de passe
-- Les statistiques (`usage/{uid}` dans chaque projet) ne sont lisibles que par l'administratrice, grâce aux règles Firestore de chaque projet ; si l'accès n'est pas encore autorisé, la page affiche les règles à coller dans la console Firebase
-- Un onglet **Retours** rassemble les messages « Une idée, un souci ? » envoyés depuis les applis (pour l'instant Routine : collection `feedback`), avec leur contexte (version, écran, langue, navigateur) et un statut Nouveau / À traiter / Fait
-- Aucune donnée n'est stockée dans ce dépôt : la page lit tout en direct depuis Firebase
+- One tab per app: [Collection](https://marl75.github.io/mes-livres/) and [Routine](https://marl75.github.io/fitness-coach/), plus a **Site** tab for [marlenemenoire.com](https://marlenemenoire.com/)
+- The Site tab reads the visitors measured by [GoatCounter](https://marlenemenoire.goatcounter.com) (cookieless) through its public counter: no key in the page; the "Allow adding visitor counts on your website" setting must be ticked in GoatCounter
+- Each app has its own Firebase project; the page signs in to both with the same email and password
+- The statistics (`usage/{uid}` in each project) can only be read by the administrator, thanks to each project's Firestore rules; if access is not authorised yet, the page shows the rules to paste into the Firebase console
+- A **Retours** (feedback) tab gathers the « Une idée, un souci ? » ("Got an idea or a problem?") messages sent from the apps (Routine for now: `feedback` collection), with their context (version, screen, language, browser) and a Nouveau / À traiter / Fait (new / to do / done) status
+- No data is stored in this repository: the page reads everything live from Firebase
