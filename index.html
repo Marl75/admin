@@ -1190,17 +1190,60 @@ function loginHtml(message) {
     </div>`;
 }
 
+// Onglet d'une appli non connectée : formulaire pour s'y connecter seule, l'autre reste connectée
+const SIGNIN_ERRORS = {
+  'auth/invalid-credential': 'E-mail ou mot de passe refusé par ce projet. Le mot de passe de cette appli est peut-être différent de celui de l\'autre.',
+  'auth/wrong-password': 'Mot de passe refusé par ce projet.',
+  'auth/user-not-found': 'Aucun compte avec cet e-mail dans ce projet.',
+  'auth/too-many-requests': 'Trop d\'essais : Firebase bloque ce compte quelques minutes. Réessaie plus tard ou réinitialise le mot de passe.',
+  'auth/missing-email': 'Indique ton e-mail.',
+  'auth/invalid-email': 'E-mail invalide.',
+  'auth/network-request-failed': 'Pas de connexion au réseau.',
+};
+function connectOneHtml(key) {
+  const a = APPS[key];
+  const known = Object.values(APPS).map(x => x.user && x.user.email).find(Boolean) || '';
+  const err = a.signInError ? (SIGNIN_ERRORS[a.signInError] || `Connexion refusée (${a.signInError}).`) : '';
+  return `<div class="card login" style="margin:0; max-width:460px;">
+      <p class="sub">Pas connecté à ${a.name}. Connecte-toi à cette appli seule : ${Object.values(APPS).filter(x => x.user).map(x => x.name).join(', ') || 'l\'autre appli'} reste connectée.</p>
+      ${err ? `<p class="error">${esc(err)}</p>` : ''}
+      ${a.resetSent ? `<p class="note" style="color:var(--green)">E-mail de réinitialisation envoyé par ${a.name}. Choisis le même mot de passe que pour l'autre appli pour n'avoir qu'une connexion à faire.</p>` : ''}
+      <div><label>E-mail<input id="email-one" type="email" autocomplete="email" value="${esc(known)}"></label></div>
+      <div><label>Mot de passe de ${a.name}<input id="password-one" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')Admin.signInOne('${key}')"></label></div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;"><button class="primary" onclick="Admin.signInOne('${key}')">Se connecter à ${a.name}</button><button onclick="Admin.resetOne('${key}')">Mot de passe oublié ?</button></div>
+    </div>`;
+}
+
 const Admin = {
   message: '',
   async signIn() {
     const email = document.getElementById('email').value.trim(), pw = document.getElementById('password').value;
     const res = await Promise.allSettled(Object.values(APPS).map(a => a.auth.signInWithEmailAndPassword(email, pw)));
+    Object.values(APPS).forEach((a, i) => { a.signInError = res[i].status === 'rejected' ? res[i].reason.code : null; });
     const failed = Object.values(APPS).filter((a, i) => res[i].status === 'rejected').map(a => a.name);
     Admin.message = failed.length === res.length ? 'E-mail ou mot de passe incorrect.'
       : failed.length ? `Connexion refusée pour : ${failed.join(', ')} (compte absent ou mot de passe différent).` : '';
     draw();
   },
   signOut() { Object.values(APPS).forEach(a => a.auth.signOut()); },
+  // Connexion à une seule appli, sans toucher à celle qui est déjà connectée
+  // (utile quand les deux comptes n'ont pas le même mot de passe)
+  async signInOne(key) {
+    const a = APPS[key];
+    const email = document.getElementById('email-one').value.trim(), pw = document.getElementById('password-one').value;
+    a.signInError = null; a.resetSent = false;
+    try { await a.auth.signInWithEmailAndPassword(email, pw); }
+    catch (e) { a.signInError = e.code || 'erreur'; draw(); }
+  },
+  // E-mail de réinitialisation envoyé par le projet Firebase de cette appli seulement
+  async resetOne(key) {
+    const a = APPS[key];
+    const email = document.getElementById('email-one').value.trim();
+    if (!email) { a.signInError = 'auth/missing-email'; draw(); return; }
+    try { await a.auth.sendPasswordResetEmail(email); a.resetSent = true; a.signInError = null; }
+    catch (e) { a.signInError = e.code || 'erreur'; }
+    draw();
+  },
   pick(m) { selected = m; draw(); },
   toggleMe(on) {
     includeMe = on;
@@ -1265,7 +1308,7 @@ function draw() {
   let body;
   if (tab === 'site') body = renderSite();
   else if (tab === 'retours') body = renderFeedback();
-  else if (!a.user) body = `<div class="card"><p class="sub">Pas connecté à ${a.name} : ton compte n'existe pas dans ce projet, ou son mot de passe est différent.</p>${Admin.message ? `<p class="error" style="margin-top:8px;">${esc(Admin.message)}</p>` : ''}<p style="margin-top:12px;"><button onclick="Admin.signOut()">Se déconnecter et réessayer</button></p></div>`;
+  else if (!a.user) body = connectOneHtml(tab);
   else if (a.error === 'rules') body = rulesHtml(tab);
   else if (a.error) body = `<p class="error">Impossible de charger les statistiques : ${esc(a.error)}</p>`;
   else if (!a.docs) { body = '<p class="note">Chargement…</p>'; }
