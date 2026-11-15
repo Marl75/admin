@@ -60,6 +60,13 @@
   .kpi.ai .v { color: #a9c6ec; }
   .group-title { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; color: #e3cf9f; margin: 40px 0 14px; letter-spacing: -.3px; }
   .group { margin-top: 10px; }
+  .split-list { display: grid; gap: 10px; }
+  .split-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr 52px; gap: 12px; align-items: center; font-size: 13px; }
+  .split-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+  .split-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--surface); }
+  .split-bar span { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #fff; min-width: 3px; }
+  .split-total { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+  @media (max-width: 600px) { .split-row { grid-template-columns: 1fr 44px; } .split-who { grid-column: 1 / -1; } }
   .overview { margin-top: 0; }
   td.num { white-space: nowrap; }
   td:first-child { white-space: nowrap; }
@@ -634,9 +641,33 @@ function itemsSection() {
         ${kpiCard(total.toLocaleString('fr-FR'), 'Éléments dans les collections')}
         ${rows.map(r => kpiCard(r.n.toLocaleString('fr-FR'), `${r.name} · ${total ? Math.round(r.n / total * 100) : 0} %`)).join('')}
       </div>
+      ${sectionsByAccount(counted)}
       <p class="note" style="margin-top:10px;">Éléments présents aujourd'hui dans chaque section, tous comptes et profils confondus (ajoutés moins supprimés), mis à jour à chaque ouverture de l'appli. Ce n'est pas le nombre de créations par mois.${missing ? ` ${missing} compte${missing > 1 ? 's' : ''} n'${missing > 1 ? 'ont' : 'a'} pas encore envoyé ce chiffre (pas rouvert l'appli depuis la mise à jour).` : ''}</p>` :
-      `<p class="note">Pas encore de données : le chiffre arrive quand les comptes ouvrent la version de l'appli qui l'envoie (mes-livres#4, pas encore publiée).</p>`}
+      `<p class="note">Pas encore de données : le chiffre arrive quand les comptes ouvrent la version de l'appli qui l'envoie .</p>`}
     </div>`;
+}
+
+// Répartition par compte : une barre à 100 % par compte, un segment par section
+const TYPE_COLORS = { livre: '#3987e5', film: '#d95926', serie: '#199e70', jeu: '#c98500' };
+function sectionsByAccount(counted) {
+  const rows = counted.map(u => {
+    const n = Object.fromEntries(Object.keys(TYPE_NAMES).map(ty => [ty, u.itemsByType[ty] || 0]));
+    return { u, n, total: Object.values(n).reduce((a, b) => a + b, 0) };
+  }).filter(r => r.total).sort((a, b) => b.total - a.total);
+  if (!rows.length) return '';
+  const me = APPS.collection.user && APPS.collection.user.uid;
+  return `
+      <h2 style="margin-top:22px;">Répartition par compte</h2>
+      <div class="legend" style="margin:0 0 12px; flex-wrap:wrap;">${Object.entries(TYPE_NAMES).map(([ty, name]) => `<span class="who" style="--c:${TYPE_COLORS[ty]}">${name}</span>`).join('')}</div>
+      <div class="split-list">${rows.map(r => `
+        <div class="split-row">
+          <div class="split-who">${esc(r.u.email || r.u.id)}${r.u.id === me ? ' <span class="note">(toi)</span>' : ''}</div>
+          <div class="split-bar">${Object.keys(TYPE_NAMES).filter(ty => r.n[ty]).map(ty => {
+            const pc = r.n[ty] / r.total * 100;
+            return `<span style="flex:${pc.toFixed(2)} 1 0; background:${TYPE_COLORS[ty]}" title="${TYPE_NAMES[ty]} : ${r.n[ty]} élément${r.n[ty] > 1 ? 's' : ''} (${Math.round(pc)} %)">${pc >= 12 ? `${Math.round(pc)} %` : ''}</span>`;
+          }).join('')}</div>
+          <div class="split-total">${r.total.toLocaleString('fr-FR')}</div>
+        </div>`).join('')}</div>`;
 }
 
 // ----- Collection : tout ce qui concerne l'IA, au même endroit -----
