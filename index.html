@@ -527,16 +527,21 @@ function allTime() {
   return t;
 }
 
-// ----- Démo : clics « Essayer sans compte » de la page Ma Collection du site (GoatCounter) -----
-// L'appli elle-même ne compte pas les ouvertures de ?demo : seuls les clics depuis le site sont connus.
+// ----- Démo : ouvertures de ?demo, comptées par GoatCounter (site marlenemenoire) -----
+// Deux compteurs qui s'additionnent sans doublon : clic-demo (clics « Essayer sans compte » sur la
+// page Ma Collection du site) et collection-demo (ouvertures qui ne viennent pas du site, envoyées
+// par l'appli elle-même, js/demo.js de mes-livres). months[m] = { site, direct }.
 const DEMO = { months: null, error: null, loading: false };
+const DEMO_DIRECT_SINCE = '15/11/2026';   // publication du compteur collection-demo dans l'appli (à ajuster)
+const demoOpenings = m => DEMO.months && DEMO.months[m] ? DEMO.months[m].site + DEMO.months[m].direct : 0;
 async function loadDemo() {
   if (DEMO.loading || DEMO.months) return;
   DEMO.loading = true;
   try {
     const months = lastMonths(12);
-    const counts = await Promise.all(months.map(m => siteCount('clic-demo', m)));
-    DEMO.months = Object.fromEntries(months.map((m, i) => [m, counts[i]]));
+    const [site, direct] = await Promise.all(['clic-demo', 'collection-demo']
+      .map(p => Promise.all(months.map(m => siteCount(p, m)))));
+    DEMO.months = Object.fromEntries(months.map((m, i) => [m, { site: site[i], direct: direct[i] }]));
     DEMO.error = null;
   } catch (e) {
     DEMO.error = e instanceof TypeError ? 'compteur GoatCounter injoignable' : e.message;
@@ -552,25 +557,27 @@ function overviewSection(perMonth) {
   const newByMonth = Object.fromEntries(months.map(m => [m, 0]));
   docs.forEach(u => { if (u.firstSeen) { const m = monthKey(new Date(u.firstSeen)); if (m in newByMonth) newByMonth[m]++; } });
   const firstTracked = Math.min(...docs.map(u => u.firstSeen || Infinity));
-  const demoTotal = DEMO.months ? Object.values(DEMO.months).reduce((n, x) => n + x, 0) : null;
-  const pm = months.map(m => ({ m, newAccounts: newByMonth[m], demo: DEMO.months ? DEMO.months[m] || 0 : 0 }));
-  const demoSel = DEMO.months ? DEMO.months[selected] || 0 : null;
+  const demoSum = k => Object.values(DEMO.months).reduce((n, x) => n + x[k], 0);
+  const demoTotal = DEMO.months ? demoSum('site') + demoSum('direct') : null;
+  const pm = months.map(m => ({ m, newAccounts: newByMonth[m], demo: demoOpenings(m) }));
+  const demoSel = DEMO.months ? demoOpenings(selected) : null;
   return `
     <div class="section card overview">
       <h2>Vue d'ensemble · depuis le début</h2>
       <div class="kpis" style="margin-bottom:6px;">
         ${kpiCard(docs.length, 'Comptes créés')}
         ${kpiCard(items.toLocaleString('fr-FR'), 'Éléments dans les collections')}
-        ${kpiCard(demoTotal == null ? (DEMO.error ? '–' : '…') : demoTotal, 'Clics vers la démo (12 mois)')}
+        ${kpiCard(demoTotal == null ? (DEMO.error ? '–' : '…') : demoTotal, 'Ouvertures de la démo (12 mois)')}
         ${kpiCard(usd(t.recoCost), 'Coût IA total', '', 'ai')}
       </div>
-      ${secondary([[t.sessions.toLocaleString('fr-FR'), "ouvertures de l'appli"], [t.reco, 'demandes de recos'], [t.recoAdded, 'suggestions ajoutées à la wishlist'], [demoSel == null ? '–' : demoSel, `clics démo en ${monthLabel(selected, 'long')}`]])}
-      ${DEMO.error ? `<p class="error" style="font-size:13px;">Clics démo indisponibles : ${esc(DEMO.error)}</p>` : ''}
+      ${secondary([[t.sessions.toLocaleString('fr-FR'), "ouvertures de l'appli"], [t.reco, 'demandes de recos'], [t.recoAdded, 'suggestions ajoutées à la wishlist'], [demoSel == null ? '–' : demoSel, `ouvertures de la démo en ${monthLabel(selected, 'long')}`]])}
+      ${DEMO.months ? secondary([[demoSum('site'), 'ouvertures de la démo depuis le site'], [demoSum('direct'), 'en direct (lien partagé, LinkedIn, appli…)']]) : ''}
+      ${DEMO.error ? `<p class="error" style="font-size:13px;">Ouvertures de la démo indisponibles : ${esc(DEMO.error)}</p>` : ''}
       <div class="charts2">
         ${monthChart('Nouveaux comptes', pm, 'newAccounts', 'users')}
-        ${monthChart('Clics vers la démo', pm, 'demo', 'days')}
+        ${monthChart('Ouvertures de la démo', pm, 'demo', 'days')}
       </div>
-      <p class="note" style="margin-top:10px;">Comptes créés : comptes qui ont ouvert l'appli au moins une fois depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''} ; les comptes plus anciens sont tous rangés dans ce premier mois. Le total exact des inscriptions est dans <a href="https://console.firebase.google.com/project/${APPS.collection.config.projectId}/authentication/users" target="_blank" rel="noopener" style="color:var(--accent)">Firebase Authentication</a>. Démo : visiteurs qui ont cliqué « Essayer sans compte » sur la page Ma Collection du site ; les ouvertures directes de <code>?demo</code> ne sont pas comptées.</p>
+      <p class="note" style="margin-top:10px;">Comptes créés : comptes qui ont ouvert l'appli au moins une fois depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''} ; les comptes plus anciens sont tous rangés dans ce premier mois. Le total exact des inscriptions est dans <a href="https://console.firebase.google.com/project/${APPS.collection.config.projectId}/authentication/users" target="_blank" rel="noopener" style="color:var(--accent)">Firebase Authentication</a>. Démo : visiteurs uniques estimés par GoatCounter, clics « Essayer sans compte » sur la page Ma Collection du site plus ouvertures de <code>?demo</code> qui ne viennent pas du site (comptées par l'appli depuis le ${DEMO_DIRECT_SINCE} ; avant, seuls les clics du site sont connus). Les visiteurs avec un bloqueur de pub ne sont pas comptés.</p>
     </div>`;
 }
 
@@ -591,37 +598,53 @@ function typesLabel(u) {
 
 function typesSection() {
   const known = docs.filter(u => u.types);
+  // Éléments par section (itemsByType) : envoyés par l'appli depuis la version du 15/11/2026
+  const counted = docs.filter(u => u.itemsByType);
   const all = Object.keys(TYPE_NAMES).length;
-  const ranking = Object.entries(TYPE_NAMES).map(([ty, name]) => ({ ty, name, n: known.filter(u => (u.types || {})[ty] > 0).length }))
-    .sort((a, b) => b.n - a.n);
+  const totalItems = counted.reduce((n, u) => n + Object.values(u.itemsByType).reduce((a, b) => a + (b || 0), 0), 0);
+  const ranking = Object.entries(TYPE_NAMES).map(([ty, name]) => ({
+    ty, name,
+    shown: known.filter(u => (u.types || {})[ty] > 0).length,
+    items: counted.reduce((n, u) => n + (u.itemsByType[ty] || 0), 0),
+    users: counted.filter(u => u.itemsByType[ty] > 0).length,
+  })).sort((a, b) => b.items - a.items || b.shown - a.shown);
   const top = ranking[0];
+  const byItems = totalItems > 0;
   const onlyBooks = known.filter(u => { const s = shownTypes(u); return s.length === 1 && s[0] === 'livre'; });
-  const beyondBooks = known.filter(u => shownTypes(u).some(ty => ty !== 'livre'));
+  // Utilise autre chose que les livres : au moins un élément ailleurs (ou, sans ce chiffre, une autre section affichée)
+  const beyondBooks = byItems ? counted.filter(u => Object.keys(TYPE_NAMES).some(ty => ty !== 'livre' && u.itemsByType[ty] > 0))
+    : known.filter(u => shownTypes(u).some(ty => ty !== 'livre'));
+  // Affichée mais vide : sections qu'un compte garde visibles sans y avoir rien mis
+  const shownEmpty = counted.filter(u => u.types && shownTypes(u).some(ty => !(u.itemsByType[ty] > 0))).length;
   // A restreint : a enregistré un choix qui masque au moins une section
   const restricted = known.filter(u => u.typesCustom > 0 && shownTypes(u).length < all);
   const t = allTime();
   const answered = t.typesChosen + t.typesSkipped;
-  const of = n => `${n}<span style="font-size:18px; color:var(--faint)"> / ${known.length}</span>`;
+  const of = (n, d) => `${n}<span style="font-size:18px; color:var(--faint)"> / ${d}</span>`;
   return `
     <div class="section card">
-      <h2>Sections affichées (Mes collections)</h2>
-      ${known.length ? `
+      <h2>Sections (Mes collections) · usage et affichage</h2>
+      ${known.length || counted.length ? `
       <div class="kpis">
-        ${kpiCard(top.n ? top.name : '–', `Section la plus affichée${top.n ? ` (${top.n} / ${known.length})` : ''}`)}
-        ${kpiCard(of(onlyBooks.length), 'Comptes en Livres seulement')}
-        ${kpiCard(of(beyondBooks.length), 'Comptes qui affichent autre chose que les livres')}
-        ${kpiCard(of(restricted.length), 'Comptes qui ont masqué au moins une section')}
+        ${byItems
+          ? kpiCard(top.name, `Section la plus utilisée (${top.items.toLocaleString('fr-FR')} éléments · ${Math.round(top.items / totalItems * 100)} %)`)
+          : kpiCard(top.shown ? top.name : '–', `Section la plus affichée${top.shown ? ` (${top.shown} / ${known.length})` : ''}`)}
+        ${kpiCard(of(onlyBooks.length, known.length), 'Comptes en Livres seulement')}
+        ${kpiCard(of(beyondBooks.length, byItems ? counted.length : known.length), byItems ? 'Comptes avec des éléments hors livres' : 'Comptes qui affichent autre chose que les livres')}
+        ${kpiCard(of(restricted.length, known.length), 'Comptes qui ont masqué au moins une section')}
       </div>
-      ${secondary([[t.typesChosen, "réponses à l'accueil « Que veux-tu suivre ? » avec un choix"], [t.typesSkipped, `accueils passés (tout afficher)${answered ? ` · ${Math.round(t.typesSkipped / answered * 100)} %` : ''}`]])}
+      ${secondary([[t.typesChosen, "réponses à l'accueil « Que veux-tu suivre ? » avec un choix"], [t.typesSkipped, `accueils passés (tout afficher)${answered ? ` · ${Math.round(t.typesSkipped / answered * 100)} %` : ''}`]].concat(byItems ? [[shownEmpty, 'comptes qui affichent une section vide']] : []))}
       <div class="table-wrap"><table>
-        <thead><tr><th>Section</th><th class="num">Comptes qui l'affichent</th><th class="num">Part</th></tr></thead>
-        <tbody>${ranking.map(r => `<tr><td>${r.name}</td><td class="num">${r.n} / ${known.length}</td><td class="num">${Math.round(r.n / known.length * 100)} %</td></tr>`).join('')}</tbody>
+        <thead><tr><th>Section</th><th class="num">Éléments</th><th class="num">Part des éléments</th><th class="num">Comptes qui l'utilisent</th><th class="num">Comptes qui l'affichent</th></tr></thead>
+        <tbody>${ranking.map(r => `<tr><td>${r.name}</td>${counted.length
+          ? `<td class="num">${r.items.toLocaleString('fr-FR')}</td><td class="num">${totalItems ? Math.round(r.items / totalItems * 100) + ' %' : '–'}</td><td class="num">${r.users} / ${counted.length}</td>`
+          : '<td class="num">–</td><td class="num">–</td><td class="num">–</td>'}<td class="num">${known.length ? `${r.shown} / ${known.length}` : '–'}</td></tr>`).join('')}</tbody>
       </table></div>
       ${restricted.length ? `<h2 style="margin-top:20px;">Comptes qui ont restreint leurs sections</h2><div class="table-wrap"><table>
         <thead><tr><th>E-mail</th><th>Sections gardées</th><th class="num">Profils avec un choix</th></tr></thead>
         <tbody>${restricted.map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${typesLabel(u)}</td><td class="num">${u.typesCustom} / ${u.profileCount || 1}</td></tr>`).join('')}</tbody>
       </table></div>` : ''}
-      <p class="note" style="margin-top:10px;">Parmi les ${known.length} compte${known.length > 1 ? 's' : ''} ouverts depuis la mise en place de ce suivi, mis à jour à chaque ouverture. Une section « affichée » n'est pas forcément utilisée : l'appli n'envoie pas encore le nombre d'éléments par section, ce qui permettrait de dire laquelle est la plus remplie.</p>` :
+      <p class="note" style="margin-top:10px;">Utilisée : au moins un élément dans la section, tous profils confondus ; la section la plus utilisée est celle qui contient le plus d'éléments. Affichée : visible dans au moins un profil. Chiffres mis à jour à chaque ouverture de l'appli${counted.length < docs.length ? ` ; ${docs.length - counted.length} compte${docs.length - counted.length > 1 ? 's' : ''} n'${docs.length - counted.length > 1 ? 'ont' : 'a'} pas encore envoyé ${docs.length - counted.length > 1 ? 'leurs' : 'ses'} éléments par section (pas rouvert l'appli depuis la mise à jour)` : ''}.</p>` :
       `<p class="note">Pas encore de données : elles arrivent quand les comptes ouvrent la nouvelle version de l'appli.</p>`}
     </div>`;
 }
@@ -821,7 +844,10 @@ service cloud.firestore {
         let m2 = ym(request.time + duration.value(14, 'h'));
         let changedMonths = months.diff(old).affectedKeys();
         return changed.hasOnly(['email', 'firstSeen', 'lastSeen', 'createdByMonth', 'itemCount',
-                                'profileCount', 'docBytes', 'types', 'typesCustom', 'months'])
+                                'profileCount', 'docBytes', 'types', 'typesCustom', 'itemsByType',
+                                'months'])
+            && (!('itemsByType' in changed) || (after.itemsByType is map
+                && after.itemsByType.keys().hasOnly(['livre', 'film', 'serie', 'jeu'])))
             && (!('email' in changed) || after.email == request.auth.token.get('email', ''))
             && (!('firstSeen' in changed) || !('firstSeen' in before))
             && changedMonths.hasOnly([m1, m2]) && changedMonths.size() <= 1
