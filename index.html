@@ -58,6 +58,9 @@
   .stack .seg:hover { filter: brightness(1.25); }
   .legend .who::before { background: var(--c); }
   .kpi.ai .v { color: #a9c6ec; }
+  .group-title { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 600; color: #e3cf9f; margin: 40px 0 14px; letter-spacing: -.3px; }
+  .group { margin-top: 10px; }
+  .overview { margin-top: 0; }
   td.num { white-space: nowrap; }
   td:first-child { white-space: nowrap; }
   .dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
@@ -204,8 +207,9 @@ const dateLabel = ts => ts ? new Date(ts).toLocaleDateString('fr-FR', { day: 'nu
 // ----- Lecture des chiffres : ton compte, mois en cours, variations -----
 // Ton propre compte (le même uid que celui connecté à cette page) est exclu par défaut pour ne pas
 // gonfler les chiffres ; l'interrupteur en haut des onglets Collection et Routine le réintègre.
-let includeMe = false;
-try { includeMe = localStorage.getItem('admin-include-me') === '1'; } catch (e) {}
+// Ton compte est désormais inclus par défaut ; décoche « Inclure mon compte » pour le retirer
+let includeMe = true;
+try { includeMe = localStorage.getItem('admin-include-me') !== '0'; } catch (e) {}
 const withoutMe = a => includeMe ? a.docs : a.docs.filter(u => u.id !== a.user.uid);
 const meToggle = () => `<label class="me"><input type="checkbox" ${includeMe ? 'checked' : ''} onchange="Admin.toggleMe(this.checked)"> Inclure mon compte</label>`;
 const accountsLabel = n => `${n} compte${n > 1 ? 's' : ''} connu${n > 1 ? 's' : ''}${includeMe ? '' : ' (sans le tien)'}`;
@@ -259,26 +263,50 @@ const USER_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#00
 const OTHERS_COLOR = '#6b6678';
 
 // Comptes classés par coût total sur la période : la couleur suit le compte, pas le mois
-function recoColors(perMonth) {
+function recoColors(perMonth, key = 'recoCost') {
   const totals = {};
-  perMonth.forEach(p => p.rows.forEach(r => { if (r.recoCost) totals[r.email] = (totals[r.email] || 0) + r.recoCost; }));
+  perMonth.forEach(p => p.rows.forEach(r => { if (r[key]) totals[r.email] = (totals[r.email] || 0) + r[key]; }));
   const ranked = Object.keys(totals).sort((a, b) => totals[b] - totals[a] || a.localeCompare(b));
   const colors = {};
   ranked.forEach((email, i) => { colors[email] = USER_COLORS[i] || OTHERS_COLOR; });
   return { colors, ranked, totals };
 }
 
-function costStack(p, colors, ranked, maxCost) {
+function costStack(p, colors, ranked, maxCost, field = 'recoCost', fmt = usd) {
   const segs = {};
   p.rows.forEach(r => {
-    if (!r.recoCost) return;
+    if (!r[field]) return;
     const key = colors[r.email] === OTHERS_COLOR ? 'Autres comptes' : r.email;
-    segs[key] = (segs[key] || 0) + r.recoCost;
+    segs[key] = (segs[key] || 0) + r[field];
   });
   const order = [...ranked.filter(e => segs[e]), ...(segs['Autres comptes'] ? ['Autres comptes'] : [])];
   if (!order.length) return '<div class="stack"></div>';
-  return `<div class="stack" style="height:${p.recoCost / maxCost * 100}%">${order.map(k => `
-    <span class="seg" style="flex:${(segs[k] / p.recoCost * 100).toFixed(2)} 1 0; background:${colors[k] || OTHERS_COLOR}" title="${esc(monthLabel(p.m, 'long'))} · ${esc(k)} : ${usd(segs[k])}"></span>`).join('')}</div>`;
+  return `<div class="stack" style="height:${p[field] / maxCost * 100}%">${order.map(k => `
+    <span class="seg" style="flex:${(segs[k] / p[field] * 100).toFixed(2)} 1 0; background:${colors[k] || OTHERS_COLOR}" title="${esc(monthLabel(p.m, 'long'))} · ${esc(k)} : ${fmt(segs[k])}"></span>`).join('')}</div>`;
+}
+
+// Graphique sur 12 mois empilé par compte (une couleur par compte, la même d'un mois à l'autre)
+function userStackChart(title, perMonth, field, fmt = n => n, note = '') {
+  const max = Math.max(0.0001, ...perMonth.map(p => p[field] || 0));
+  const { colors, ranked, totals } = recoColors(perMonth, field);
+  const shown = ranked.filter(e => colors[e] !== OTHERS_COLOR);
+  const others = ranked.filter(e => colors[e] === OTHERS_COLOR);
+  return `
+    <div class="section card">
+      <h2>${title}</h2>
+      <div class="chart">${perMonth.map(p => `
+        <div class="col ${p.m === selected ? 'on' : ''} ${isCurrent(p.m) ? 'partial' : ''}" onclick="Admin.pick('${p.m}')" title="${monthLabel(p.m, 'long')} : ${fmt(p[field] || 0)}">
+          <div class="bars">${costStack(p, colors, ranked, max, field, fmt)}</div>
+          <span class="n">${p[field] ? fmt(p[field]) : ''}</span>
+          <span class="m">${monthLabel(p.m)}</span>
+        </div>`).join('')}</div>
+      <div class="legend" style="flex-wrap:wrap;">
+        ${shown.map(e => `<span class="who" style="--c:${colors[e]}">${esc(e)} · ${fmt(totals[e])}</span>`).join('')}
+        ${others.length ? `<span class="who" style="--c:${OTHERS_COLOR}">${others.length} autre${others.length > 1 ? 's' : ''} compte${others.length > 1 ? 's' : ''} · ${fmt(others.reduce((n, e) => n + totals[e], 0))}</span>` : ''}
+        ${ranked.length ? '' : '<span>Rien sur la période.</span>'}
+      </div>
+      ${note ? `<p class="note" style="margin-top:10px;">${note}</p>` : ''}
+    </div>`;
 }
 
 // ----- Collection : recommandations jour par jour (documents recoDaily/{AAAA-MM-JJ}) -----
@@ -482,6 +510,70 @@ function monthStats(m) {
   };
 }
 
+// Totaux depuis le début, tous mois confondus (comptes affichés : avec ou sans le tien)
+function allTime() {
+  const t = { reco: 0, recoFailed: 0, recoAdded: 0, recoDismissed: 0, recoCost: 0, recoTokens: 0, sessions: 0, typesChosen: 0, typesSkipped: 0, recoUsers: 0 };
+  docs.forEach(u => {
+    let asked = false;
+    Object.values(u.months || {}).forEach(x => {
+      t.reco += x.reco || 0; t.recoFailed += x.recoFailed || 0; t.recoAdded += x.recoAdded || 0;
+      t.recoDismissed += x.recoDismissed || 0; t.recoCost += x.recoCost || 0; t.sessions += x.sessions || 0;
+      t.recoTokens += (x.recoTokensIn || 0) + (x.recoTokensOut || 0);
+      t.typesChosen += x.typesChosen || 0; t.typesSkipped += x.typesSkipped || 0;
+      if (x.reco) asked = true;
+    });
+    if (asked) t.recoUsers++;
+  });
+  return t;
+}
+
+// ----- Démo : clics « Essayer sans compte » de la page Ma Collection du site (GoatCounter) -----
+// L'appli elle-même ne compte pas les ouvertures de ?demo : seuls les clics depuis le site sont connus.
+const DEMO = { months: null, error: null, loading: false };
+async function loadDemo() {
+  if (DEMO.loading || DEMO.months) return;
+  DEMO.loading = true;
+  try {
+    const months = lastMonths(12);
+    const counts = await Promise.all(months.map(m => siteCount('clic-demo', m)));
+    DEMO.months = Object.fromEntries(months.map((m, i) => [m, counts[i]]));
+    DEMO.error = null;
+  } catch (e) {
+    DEMO.error = e instanceof TypeError ? 'compteur GoatCounter injoignable' : e.message;
+  }
+  DEMO.loading = false;
+  if (tab === 'collection') draw();
+}
+
+function overviewSection(perMonth) {
+  const t = allTime();
+  const items = docs.reduce((n, u) => n + (u.itemCount || 0), 0);
+  const months = perMonth.map(p => p.m);
+  const newByMonth = Object.fromEntries(months.map(m => [m, 0]));
+  docs.forEach(u => { if (u.firstSeen) { const m = monthKey(new Date(u.firstSeen)); if (m in newByMonth) newByMonth[m]++; } });
+  const firstTracked = Math.min(...docs.map(u => u.firstSeen || Infinity));
+  const demoTotal = DEMO.months ? Object.values(DEMO.months).reduce((n, x) => n + x, 0) : null;
+  const pm = months.map(m => ({ m, newAccounts: newByMonth[m], demo: DEMO.months ? DEMO.months[m] || 0 : 0 }));
+  const demoSel = DEMO.months ? DEMO.months[selected] || 0 : null;
+  return `
+    <div class="section card overview">
+      <h2>Vue d'ensemble · depuis le début</h2>
+      <div class="kpis" style="margin-bottom:6px;">
+        ${kpiCard(docs.length, 'Comptes créés')}
+        ${kpiCard(items.toLocaleString('fr-FR'), 'Éléments dans les collections')}
+        ${kpiCard(demoTotal == null ? (DEMO.error ? '–' : '…') : demoTotal, 'Clics vers la démo (12 mois)')}
+        ${kpiCard(usd(t.recoCost), 'Coût IA total', '', 'ai')}
+      </div>
+      ${secondary([[t.sessions.toLocaleString('fr-FR'), "ouvertures de l'appli"], [t.reco, 'demandes de recos'], [t.recoAdded, 'suggestions ajoutées à la wishlist'], [demoSel == null ? '–' : demoSel, `clics démo en ${monthLabel(selected, 'long')}`]])}
+      ${DEMO.error ? `<p class="error" style="font-size:13px;">Clics démo indisponibles : ${esc(DEMO.error)}</p>` : ''}
+      <div class="charts2">
+        ${monthChart('Nouveaux comptes', pm, 'newAccounts', 'users')}
+        ${monthChart('Clics vers la démo', pm, 'demo', 'days')}
+      </div>
+      <p class="note" style="margin-top:10px;">Comptes créés : comptes qui ont ouvert l'appli au moins une fois depuis la mise en place du suivi${isFinite(firstTracked) ? ` (${dateLabel(firstTracked)})` : ''} ; les comptes plus anciens sont tous rangés dans ce premier mois. Le total exact des inscriptions est dans <a href="https://console.firebase.google.com/project/${APPS.collection.config.projectId}/authentication/users" target="_blank" rel="noopener" style="color:var(--accent)">Firebase Authentication</a>. Démo : visiteurs qui ont cliqué « Essayer sans compte » sur la page Ma Collection du site ; les ouvertures directes de <code>?demo</code> ne sont pas comptées.</p>
+    </div>`;
+}
+
 // ----- Collection : sections affichées (« Mes collections ») -----
 // Chaque compte envoie à chaque ouverture, pour chaque type, le nombre de ses profils qui
 // l'affichent (types) et le nombre de profils qui ont fait un choix (typesCustom).
@@ -497,34 +589,61 @@ function typesLabel(u) {
   return shown.length === Object.keys(TYPE_NAMES).length ? 'Toutes' : shown.map(ty => TYPE_NAMES[ty]).join(', ');
 }
 
-function typesSection(stats) {
+function typesSection() {
   const known = docs.filter(u => u.types);
-  const custom = known.filter(u => u.typesCustom > 0).length;
-  const single = known.filter(u => shownTypes(u).length === 1).length;
-  const answered = stats.typesChosen + stats.typesSkipped;
+  const all = Object.keys(TYPE_NAMES).length;
+  const ranking = Object.entries(TYPE_NAMES).map(([ty, name]) => ({ ty, name, n: known.filter(u => (u.types || {})[ty] > 0).length }))
+    .sort((a, b) => b.n - a.n);
+  const top = ranking[0];
+  const onlyBooks = known.filter(u => { const s = shownTypes(u); return s.length === 1 && s[0] === 'livre'; });
+  const beyondBooks = known.filter(u => shownTypes(u).some(ty => ty !== 'livre'));
+  // A restreint : a enregistré un choix qui masque au moins une section
+  const restricted = known.filter(u => u.typesCustom > 0 && shownTypes(u).length < all);
+  const t = allTime();
+  const answered = t.typesChosen + t.typesSkipped;
+  const of = n => `${n}<span style="font-size:18px; color:var(--faint)"> / ${known.length}</span>`;
   return `
     <div class="section card">
       <h2>Sections affichées (Mes collections)</h2>
+      ${known.length ? `
       <div class="kpis">
-        <div class="card kpi"><div class="v">${stats.typesChosen}</div><div class="l">Accueil en ${monthLabel(selected, 'long')} : sections choisies</div></div>
-        <div class="card kpi"><div class="v">${stats.typesSkipped}</div><div class="l">Accueil passé (tout afficher)${answered ? ` · ${Math.round(stats.typesSkipped / answered * 100)} %` : ''}</div></div>
-        <div class="card kpi"><div class="v">${custom}</div><div class="l">Comptes avec un choix enregistré</div></div>
-        <div class="card kpi"><div class="v">${single}</div><div class="l">Comptes avec une seule section</div></div>
+        ${kpiCard(top.n ? top.name : '–', `Section la plus affichée${top.n ? ` (${top.n} / ${known.length})` : ''}`)}
+        ${kpiCard(of(onlyBooks.length), 'Comptes en Livres seulement')}
+        ${kpiCard(of(beyondBooks.length), 'Comptes qui affichent autre chose que les livres')}
+        ${kpiCard(of(restricted.length), 'Comptes qui ont masqué au moins une section')}
       </div>
-      ${known.length ? `<div class="table-wrap"><table>
+      ${secondary([[t.typesChosen, "réponses à l'accueil « Que veux-tu suivre ? » avec un choix"], [t.typesSkipped, `accueils passés (tout afficher)${answered ? ` · ${Math.round(t.typesSkipped / answered * 100)} %` : ''}`]])}
+      <div class="table-wrap"><table>
         <thead><tr><th>Section</th><th class="num">Comptes qui l'affichent</th><th class="num">Part</th></tr></thead>
-        <tbody>${Object.entries(TYPE_NAMES).map(([ty, name]) => {
-          const n = known.filter(u => (u.types || {})[ty] > 0).length;
-          return `<tr><td>${name}</td><td class="num">${n} / ${known.length}</td><td class="num">${Math.round(n / known.length * 100)} %</td></tr>`;
-        }).join('')}</tbody>
+        <tbody>${ranking.map(r => `<tr><td>${r.name}</td><td class="num">${r.n} / ${known.length}</td><td class="num">${Math.round(r.n / known.length * 100)} %</td></tr>`).join('')}</tbody>
+      </table></div>
+      ${restricted.length ? `<h2 style="margin-top:20px;">Comptes qui ont restreint leurs sections</h2><div class="table-wrap"><table>
+        <thead><tr><th>E-mail</th><th>Sections gardées</th><th class="num">Profils avec un choix</th></tr></thead>
+        <tbody>${restricted.map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${typesLabel(u)}</td><td class="num">${u.typesCustom} / ${u.profileCount || 1}</td></tr>`).join('')}</tbody>
       </table></div>` : ''}
-      <p class="note">${known.length
-        ? `Comptes qui affichent chaque section, parmi les ${known.length} compte${known.length > 1 ? 's' : ''} ouverts depuis la mise en place de ce suivi. Le choix d'un compte est mis à jour à sa prochaine ouverture de l'appli.`
-        : 'Pas encore de données : elles arrivent quand les comptes ouvrent la nouvelle version de l\'appli.'}</p>
+      <p class="note" style="margin-top:10px;">Parmi les ${known.length} compte${known.length > 1 ? 's' : ''} ouverts depuis la mise en place de ce suivi, mis à jour à chaque ouverture. Une section « affichée » n'est pas forcément utilisée : l'appli n'envoie pas encore le nombre d'éléments par section, ce qui permettrait de dire laquelle est la plus remplie.</p>` :
+      `<p class="note">Pas encore de données : elles arrivent quand les comptes ouvrent la nouvelle version de l'appli.</p>`}
     </div>`;
 }
 
-
+// ----- Collection : tout ce qui concerne l'IA, au même endroit -----
+function aiGroup(stats, perMonth) {
+  const t = allTime();
+  return `
+    <div class="group">
+      <h2 class="group-title">Intelligence artificielle · recommandations par Claude</h2>
+      <div class="kpis">
+        ${kpiCard(usd(t.recoCost), 'Coût total depuis le début', '', 'ai')}
+        ${kpiCard(t.reco, `Demandes (${t.recoUsers} compte${t.recoUsers > 1 ? 's' : ''})`, '', 'ai')}
+        ${kpiCard(t.recoAdded, 'Suggestions ajoutées à la wishlist', '', 'ai')}
+        ${kpiCard(rate(t.recoAdded, t.recoAdded + t.recoDismissed), "Taux d'acceptation", '', 'ai')}
+        ${kpiCard(t.recoAdded ? usd(t.recoCost / t.recoAdded) : '–', 'Coût par suggestion ajoutée', '', 'ai')}
+      </div>
+      ${secondary([[t.reco ? usd(t.recoCost / t.reco) : '–', 'en moyenne par demande'], [t.recoFailed, 'demandes en échec'], [t.recoTokens.toLocaleString('fr-FR'), 'tokens au total']])}
+      ${recoSection(stats, perMonth)}
+      ${opsSection(APPS.collection)}
+    </div>`;
+}
 
 function renderCollection(docs) {
   const months = lastMonths(12);
@@ -533,6 +652,7 @@ function renderCollection(docs) {
   const perMonth = months.map(m => ({ m, ...monthStats(m) }));
   const prev = monthStats(prevMonthKey(selected));
   const firstTracked = Math.min(...docs.map(u => Math.min(...Object.values(u.months || {}).map(x => x.lastSeen || Infinity))));
+  loadDemo();
 
   return `
     <div class="top">
@@ -540,41 +660,40 @@ function renderCollection(docs) {
       ${topButtons(meToggle())}
     </div>
 
+    ${overviewSection(perMonth)}
+
+    <h2 class="group-title">Mois par mois</h2>
     <div class="months">${months.slice().reverse().map(m => `<button class="${m === selected ? 'on' : ''}" onclick="Admin.pick('${m}')">${monthLabel(m, 'long')}</button>`).join('')}</div>
 
     <div class="kpis">
       ${kpiCard(stats.active, 'Utilisateurs actifs', deltaHtml(stats.active, prev.active, selected))}
       ${kpiCard(stats.created, 'Éléments créés', deltaHtml(stats.created, prev.created, selected))}
-      ${kpiCard(stats.recoAdded, 'Recos ajoutées à la wishlist', deltaHtml(stats.recoAdded, prev.recoAdded, selected), 'ai')}
-      ${kpiCard(usd(stats.recoCost), 'Coût IA du mois', deltaHtml(stats.recoCost, prev.recoCost, selected, usd, true), 'ai')}
+      ${kpiCard(stats.sessions, "Ouvertures de l'appli", deltaHtml(stats.sessions, prev.sessions, selected))}
+      ${kpiCard(stats.modified, 'Éléments modifiés', deltaHtml(stats.modified, prev.modified, selected))}
     </div>
-    ${secondary([[stats.sessions, "ouvertures de l'appli"], [stats.modified, 'éléments modifiés'], [stats.deleted, 'supprimés'], [stats.reco, `demandes de recos (${stats.recoUsers} compte${stats.recoUsers > 1 ? 's' : ''})`]])}
+    ${secondary([[stats.deleted, 'éléments supprimés'], [usd(stats.recoCost), 'de coût IA (détail plus bas)']])}
     ${partialNote(selected)}
 
-    <div class="charts2">
-      ${monthChart('Utilisateurs actifs', perMonth, 'active', 'users')}
-      ${monthChart('Éléments créés', perMonth, 'created', 'created')}
-    </div>
+    ${monthChart('Utilisateurs actifs', perMonth, 'active', 'users')}
+    ${userStackChart('Éléments créés par compte · 12 derniers mois', perMonth, 'created', n => n, 'Une couleur par compte, la même tous les mois ; survole une barre pour le détail. Au-delà de 7 comptes, les autres sont regroupés en gris.')}
 
     <div class="section card">
       <h2>Détail de ${monthLabel(selected, 'long')}</h2>
       ${stats.rows.length ? `<div class="table-wrap"><table>
-        <thead><tr><th>E-mail</th><th class="num">Ouvertures</th><th class="num">Créés</th><th class="num">Modifiés</th><th class="num">Supprimés</th><th>Dernière visite</th></tr></thead>
-        <tbody>${stats.rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.sessions}</td><td class="num">${r.created}</td><td class="num">${r.modified}</td><td class="num">${r.deleted}</td><td>${dateLabel(r.lastSeen)}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>E-mail</th><th class="num">Ouvertures</th><th class="num">Créés</th><th class="num">Modifiés</th><th class="num">Supprimés</th><th class="num">Recos</th><th>Dernière visite</th></tr></thead>
+        <tbody>${stats.rows.map(r => `<tr><td>${esc(r.email)}</td><td class="num">${r.sessions}</td><td class="num">${r.created}</td><td class="num">${r.modified}</td><td class="num">${r.deleted}</td><td class="num">${r.reco}</td><td>${dateLabel(r.lastSeen)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<p class="note">Aucune activité ce mois-ci.</p>'}
     </div>
 
-    ${recoSection(stats, perMonth)}
+    ${typesSection()}
 
-    ${typesSection(stats)}
-
-    ${opsSection(APPS.collection)}
+    ${aiGroup(stats, perMonth)}
 
     <div class="section card">
       <h2>Tous les comptes</h2>
       <div class="table-wrap"><table>
         <thead><tr><th>E-mail</th><th>Premier suivi</th><th>Dernière visite</th><th class="num">Éléments</th><th class="num">Profils</th><th>Sections</th><th class="num" title="Place occupée sur le maximum de 1 Mo par compte (limite de Firestore)">Taille</th></tr></thead>
-        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td><td>${typesLabel(u)}</td><td class="num">${sizeLabel(u.docBytes)}</td></tr>`).join('')}</tbody>
+        <tbody>${docs.slice().sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0)).map(u => `<tr><td>${esc(u.email || u.id)}${u.id === APPS.collection.user.uid ? ' <span class="note">(toi)</span>' : ''}</td><td>${dateLabel(u.firstSeen)}</td><td>${dateLabel(u.lastSeen)}</td><td class="num">${u.itemCount || 0}</td><td class="num">${u.profileCount || 0}</td><td>${typesLabel(u)}</td><td class="num">${sizeLabel(u.docBytes)}</td></tr>`).join('')}</tbody>
       </table></div>
     </div>
 
@@ -1078,6 +1197,7 @@ const Admin = {
   async reload() {
     if (tab === 'site') { SITE.totals = null; SITE.detail = {}; SITE.prevToDate = null; SITE.error = null; draw(); return; }
     if (tab === 'retours') { fbApps().forEach(([k, a]) => { a.fbDocs = null; a.fbError = null; loadFeedback(k); }); draw(); return; }
+    if (tab === 'collection') { DEMO.months = null; DEMO.error = null; }
     const a = APPS[tab]; a.docs = null; a.error = null; a.daily = null; a.dailyError = null; draw(); await load(tab); },
   pickDay(d) { selectedDay = d; draw(); },
   fbFilter(k) { fbFilter = k; draw(); },
